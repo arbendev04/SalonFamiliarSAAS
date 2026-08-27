@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Link } from '@inertiajs/vue3';
-import { FolderGit2, LayoutGrid, Users } from '@lucide/vue';
+import { CalendarClock, FolderGit2, LayoutGrid, Users } from '@lucide/vue';
 import AppLogo from '@/components/AppLogo.vue';
 import NavFooter from '@/components/NavFooter.vue';
 import NavMain from '@/components/NavMain.vue';
@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/sidebar';
 import { dashboard } from '@/routes';
 import { index as employeesIndex } from '@/routes/employees';
+import { index as schedulesIndex } from '@/routes/schedules';
 import type { NavItem } from '@/types';
 
 const mainNavItems: NavItem[] = [
@@ -28,6 +29,11 @@ const mainNavItems: NavItem[] = [
         title: 'Empleados',
         href: employeesIndex(),
         icon: Users,
+    },
+    {
+        title: 'Plantillas de jornada',
+        href: schedulesIndex(),
+        icon: CalendarClock,
     },
 ];
 

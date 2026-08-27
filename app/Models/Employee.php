@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Exceptions\AmbiguousContractException;
+use App\Exceptions\AmbiguousScheduleException;
 use App\Models\Concerns\BelongsToCompany;
 use Carbon\CarbonInterface;
 use Database\Factories\EmployeeFactory;
@@ -84,5 +85,29 @@ class Employee extends Model
     public function activeContractAt(CarbonInterface $date): ?EmploymentContract
     {
         return EmploymentContract::activeForEmployeeAt($this->id, $date);
+    }
+
+    /**
+     * @return HasMany<EmployeeSchedule, $this>
+     */
+    public function schedules(): HasMany
+    {
+        return $this->hasMany(EmployeeSchedule::class);
+    }
+
+    /**
+     * @return HasMany<ShiftAssignment, $this>
+     */
+    public function shiftAssignments(): HasMany
+    {
+        return $this->hasMany(ShiftAssignment::class);
+    }
+
+    /**
+     * @throws AmbiguousScheduleException
+     */
+    public function activeScheduleAt(CarbonInterface $date): ?EmployeeSchedule
+    {
+        return EmployeeSchedule::activeForEmployeeAt($this->id, $date);
     }
 }

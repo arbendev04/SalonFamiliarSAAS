@@ -70,6 +70,8 @@ El esquema autoritativo completo (columnas, aislamiento, mutabilidad) vive en [0
 
 - **Solapamiento de turnos para el mismo empleado en la misma ventana de tiempo**: se rechaza de forma explícita y bloqueante en el momento de crear o asignar el turno (al estilo del error de "contrato ambiguo" de [10-PAYROLL.md](./10-PAYROLL.md), flujo (d)) — nunca se permite silenciosamente que un empleado quede asignado a dos turnos que se superponen en el tiempo, incluyendo el caso de "doble turno" mal configurado con horas en común.
 
+**PENDING DECISION**: `work_schedule_days` no tiene columnas para definir un descanso planificado a nivel de plantilla (solo `start_time`/`end_time`/`crosses_midnight`). El flujo 3 de generación menciona crear "su(s) `shift_breaks` planificado(s)" junto con el turno generado, pero el esquema documentado no especifica de dónde sale esa ventana de descanso durante la generación automática. Hasta que se decida, la generación desde plantilla (Fase 5, implementación inicial) crea únicamente `shifts` + `shift_assignments`, sin `shift_breaks` automáticos; los descansos y turnos partidos se agregan manualmente sobre un turno ya generado (vía el endpoint de `shift_breaks`), lo cual el esquema sí soporta sin ambigüedad.
+
 ## Seguridad
 
 - **`schedules/shifts.write`**: permiso requerido para crear/modificar plantillas, generar turnos, y asignar/reasignar empleados. Según la matriz RBAC de [06-AUTHORIZATION.md](./06-AUTHORIZATION.md): `SUPER_ADMIN`, `COMPANY_OWNER`, `ADMIN`, `HR_MANAGER` tienen acceso completo; `SUPERVISOR` tiene acceso limitado a su equipo; `PAYROLL_MANAGER`, `ACCOUNTANT` y `EMPLOYEE` no tienen este permiso.
@@ -81,7 +83,7 @@ El esquema autoritativo completo (columnas, aislamiento, mutabilidad) vive en [0
 - [07-ATTENDANCE.md](./07-ATTENDANCE.md): consumidor implícito — los turnos y descansos planificados aquí definidos son la referencia contra la que se comparan los eventos reales de asistencia.
 - [09-TIME-CALCULATION.md](./09-TIME-CALCULATION.md): consumidor directo de `shift_assignments`+`shift_breaks` como "tiempo planificado" del algoritmo de cálculo.
 - [06-AUTHORIZATION.md](./06-AUTHORIZATION.md): define el permiso `schedules/shifts.write` y su matriz completa.
-- [16-AUDIT.md](./16-AUDIT.md): registro de cambios excepcionales de turno. *(Documento en redacción paralela por otro agente.)*
+- [16-AUDIT.md](./16-AUDIT.md): registro de cambios excepcionales de turno. La tabla `audit_logs` y la capa de servicio `AuditLogger` se adelantaron desde la Fase 13 durante la implementación de la Fase 5 precisamente para cubrir este caso (ver [26-PROGRESS.md](./26-PROGRESS.md)).
 
 ## Criterios de aceptación
 

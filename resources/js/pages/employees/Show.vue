@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Form, Head } from '@inertiajs/vue3';
+import { Form, Head, Link } from '@inertiajs/vue3';
 import EmploymentContractController from '@/actions/App/Http/Controllers/EmploymentContractController';
 import PayrollInformationController from '@/actions/App/Http/Controllers/PayrollInformationController';
 import Heading from '@/components/Heading.vue';
@@ -10,6 +10,7 @@ import { Label } from '@/components/ui/label';
 import { Spinner } from '@/components/ui/spinner';
 import { dashboard } from '@/routes';
 import { index } from '@/routes/employees';
+import { index as shiftsIndex } from '@/routes/employees/shifts';
 
 type EmployeeDetail = {
     id: string;
@@ -55,10 +56,18 @@ defineOptions({
     <Head :title="employee.full_name" />
 
     <div class="flex flex-col gap-6 p-4">
-        <Heading
-            :title="employee.full_name"
-            :description="`Cédula ${employee.national_id}`"
-        />
+        <div class="flex items-center justify-between">
+            <Heading
+                :title="employee.full_name"
+                :description="`Cédula ${employee.national_id}`"
+            />
+            <Link
+                :href="shiftsIndex(employee.id)"
+                class="text-sm underline underline-offset-4"
+            >
+                Ver turnos
+            </Link>
+        </div>
 
         <div
             class="overflow-x-auto rounded-xl border border-sidebar-border/70 dark:border-sidebar-border"
