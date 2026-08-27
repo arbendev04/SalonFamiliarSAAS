@@ -613,3 +613,17 @@ Cada ADR sigue este formato exacto:
 **Alternativas consideradas**: no se compararon en profundidad otras marcas (Hikvision, Suprema, Anviz) porque ZKTeco ya resolvía el requisito de "barato + reconoce huella + se puede conectar" con evidencia verificable (precio, specs, protocolo documentado, integración Laravel existente); si al momento de comprar el precio o la disponibilidad en Colombia no son adecuados, este ADR debe revisarse contra esas alternativas antes de comprar.
 
 **Consecuencias**: esto **no** resuelve el `PENDING DECISION` de proveedor de forma definitiva — sigue marcado como tal en [12-BIOMETRICS.md](./12-BIOMETRICS.md) hasta que se confirme la compra real. Cuando se compre el equipo real (o se decida otro), el contrato de `BiometricProvider` debe validarse contra el protocolo ADMS documentado aquí, y este ADR se actualiza o se reemplaza con la decisión final.
+
+---
+
+### ADR-043: Interfaz de usuario en español, sin capa de internacionalización
+
+**Contexto**: [19-FRONTEND.md](./19-FRONTEND.md) no fijaba el idioma de la interfaz; el scaffold inicial de Laravel (starter kit) trae todo el texto de UI en inglés por defecto (botones, etiquetas, títulos de página), y así se construyó la Fase 1-3. El propietario del producto preguntó si el sistema puede verse en español, dado que el mercado objetivo v1 es Colombia exclusivamente (ADR-023).
+
+**Decisión**: la interfaz de usuario se traduce **directamente a español** en cada pantalla (Blade/Vue), **sin** introducir una capa de internacionalización (i18n) con selector de idioma ni archivos de traducción por clave.
+
+**Motivo**: decisión del propietario del producto; dado que ADR-023 ya fija Colombia como único mercado de la v1, no existe todavía una necesidad real de soportar múltiples idiomas simultáneos — armar i18n ahora sería una abstracción especulativa (contra el principio YAGNI ya establecido en [AGENTS.md](./AGENTS.md)) que solo pagaría si el negocio se expande a mercados no hispanohablantes, algo no confirmado ni planeado.
+
+**Alternativas consideradas**: sistema bilingüe con i18n y selector de idioma (descartada para v1: más trabajo inicial — archivos de traducción, hook de cambio de idioma, mantenimiento de dos versiones de cada string — sin un mercado que lo requiera hoy; si en el futuro el negocio se expande a un mercado no hispanohablante, se introduce i18n en ese momento como un cambio de alcance explícito, con su propio ADR).
+
+**Consecuencias**: todas las pantallas ya construidas en inglés (auth: Login, Register, ForgotPassword, ResetPassword, ConfirmPassword, VerifyEmail; Dashboard; Settings: Profile, Security, Appearance; Employees) deben traducirse a español neutro/profesional como una tarea explícita, no incremental — ver tarea de traducción registrada tras este ADR. Toda pantalla nueva que se construya de acá en adelante (Fase 4 en adelante) se escribe directamente en español, no en inglés seguido de una traducción posterior. Identificadores de código, nombres de variables, rutas y comentarios siguen en inglés (no cambia la convención de código, solo el texto visible al usuario final).

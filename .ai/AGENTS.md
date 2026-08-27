@@ -36,7 +36,7 @@ Todo el contenido de `.ai/` proviene de un blueprint de diseño ya aprobado. Nin
 | 20 | [20-SECURITY.md](./20-SECURITY.md) | Seguridad transversal: cifrado, secretos, rate limiting, respuesta a incidentes | En toda tarea con datos sensibles o superficie de ataque |
 | 21 | [21-TESTING.md](./21-TESTING.md) | Estrategia de testing, casos obligatorios, cobertura mínima por módulo | Antes de dar por cerrada cualquier tarea de implementación |
 | 22 | [22-DEPLOYMENT.md](./22-DEPLOYMENT.md) | Entornos, pipeline CI/CD, migraciones en producción, rollback | Al tocar infraestructura o pipeline de despliegue |
-| 23 | [23-DECISIONS.md](./23-DECISIONS.md) | Registro de 42 ADRs con contexto, decisión, motivo, alternativas, consecuencias | Antes de cuestionar o revertir una decisión arquitectónica ya tomada |
+| 23 | [23-DECISIONS.md](./23-DECISIONS.md) | Registro de 43 ADRs con contexto, decisión, motivo, alternativas, consecuencias | Antes de cuestionar o revertir una decisión arquitectónica ya tomada |
 | 24 | [24-ROADMAP.md](./24-ROADMAP.md) | 16 fases (0–15) con objetivos, tareas, dependencias, criterios de aceptación | Para saber en qué fase está el proyecto y qué depende de qué |
 | 25 | [25-MVP-SCOPE.md](./25-MVP-SCOPE.md) | Qué tareas del roadmap son `[MVP]` (construir primero) vs `[POST-MVP]` (agregar después de salir a producción) | **Antes de implementar cualquier tarea** — para confirmar que no se está adelantando algo `[POST-MVP]` sin que el corte MVP esté completo |
 

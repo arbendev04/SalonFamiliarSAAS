@@ -25,20 +25,20 @@ defineProps<{
 defineOptions({
     layout: {
         breadcrumbs: [
-            { title: 'Dashboard', href: dashboard() },
-            { title: 'Employees', href: index() },
+            { title: 'Panel', href: dashboard() },
+            { title: 'Empleados', href: index() },
         ],
     },
 });
 </script>
 
 <template>
-    <Head title="Employees" />
+    <Head title="Empleados" />
 
     <div class="flex flex-col gap-6 p-4">
         <Heading
-            title="Employees"
-            description="Workers registered in your company"
+            title="Empleados"
+            description="Trabajadores registrados en tu empresa"
         />
 
         <div
@@ -49,10 +49,10 @@ defineOptions({
                     class="border-b border-sidebar-border/70 dark:border-sidebar-border"
                 >
                     <tr>
-                        <th class="p-3 font-medium">Name</th>
-                        <th class="p-3 font-medium">Document</th>
-                        <th class="p-3 font-medium">Status</th>
-                        <th class="p-3 font-medium">Hire date</th>
+                        <th class="p-3 font-medium">Nombre</th>
+                        <th class="p-3 font-medium">Documento</th>
+                        <th class="p-3 font-medium">Estado</th>
+                        <th class="p-3 font-medium">Fecha de ingreso</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -68,7 +68,7 @@ defineOptions({
                     </tr>
                     <tr v-if="employees.length === 0">
                         <td class="p-3 text-muted-foreground" colspan="4">
-                            No employees yet.
+                            Todavía no hay empleados.
                         </td>
                     </tr>
                 </tbody>
@@ -78,7 +78,7 @@ defineOptions({
         <div
             class="max-w-md space-y-4 rounded-xl border border-sidebar-border/70 p-4 dark:border-sidebar-border"
         >
-            <Heading variant="small" title="Add employee" />
+            <Heading variant="small" title="Agregar empleado" />
 
             <Form
                 v-bind="EmployeeController.store.form()"
@@ -87,19 +87,19 @@ defineOptions({
                 class="grid gap-4"
             >
                 <div class="grid gap-2">
-                    <Label for="full_name">Full name</Label>
+                    <Label for="full_name">Nombre completo</Label>
                     <Input id="full_name" name="full_name" required />
                     <InputError :message="errors.full_name" />
                 </div>
 
                 <div class="grid gap-2">
-                    <Label for="national_id">National ID</Label>
+                    <Label for="national_id">Cédula</Label>
                     <Input id="national_id" name="national_id" required />
                     <InputError :message="errors.national_id" />
                 </div>
 
                 <div class="grid gap-2">
-                    <Label for="hire_date">Hire date</Label>
+                    <Label for="hire_date">Fecha de ingreso</Label>
                     <Input
                         id="hire_date"
                         type="date"
@@ -113,7 +113,7 @@ defineOptions({
 
                 <Button type="submit" :disabled="processing">
                     <Spinner v-if="processing" />
-                    Add employee
+                    Agregar empleado
                 </Button>
             </Form>
         </div>

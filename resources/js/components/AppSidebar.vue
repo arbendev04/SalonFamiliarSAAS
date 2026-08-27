@@ -20,12 +20,12 @@ import type { NavItem } from '@/types';
 
 const mainNavItems: NavItem[] = [
     {
-        title: 'Dashboard',
+        title: 'Panel',
         href: dashboard(),
         icon: LayoutGrid,
     },
     {
-        title: 'Employees',
+        title: 'Empleados',
         href: employeesIndex(),
         icon: Users,
     },
@@ -33,7 +33,7 @@ const mainNavItems: NavItem[] = [
 
 const footerNavItems: NavItem[] = [
     {
-        title: 'Repository',
+        title: 'Repositorio',
         href: 'https://github.com/arbendev04/SalonFamiliarSAAS',
         icon: FolderGit2,
     },
