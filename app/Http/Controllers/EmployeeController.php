@@ -26,7 +26,7 @@ class EmployeeController extends Controller
     {
         Employee::create($request->validated());
 
-        Inertia::flash('toast', ['type' => 'success', 'message' => __('Employee added.')]);
+        Inertia::flash('toast', ['type' => 'success', 'message' => 'Empleado agregado.']);
 
         return back();
     }
