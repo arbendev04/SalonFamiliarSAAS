@@ -2,9 +2,12 @@
 
 namespace App\Providers;
 
+use App\Models\User;
+use App\Services\Tenancy\CurrentCompany;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Validation\Rules\Password;
 
@@ -15,7 +18,7 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        //
+        $this->app->scoped(CurrentCompany::class);
     }
 
     /**
@@ -24,6 +27,18 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         $this->configureDefaults();
+        $this->configureAuthorization();
+    }
+
+    /**
+     * Route every ability check through the RBAC permission catalog
+     * (.ai/06-AUTHORIZATION.md) instead of defining a gate per permission.
+     */
+    protected function configureAuthorization(): void
+    {
+        Gate::before(function (User $user, string $ability) {
+            return $user->hasPermission($ability) ?: null;
+        });
     }
 
     /**

@@ -3,6 +3,7 @@
 namespace App\Models;
 
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
+use App\Services\Tenancy\CurrentCompany;
 use Database\Factories\UserFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Attributes\Hidden;
@@ -39,6 +40,34 @@ class User extends Authenticatable
     public function memberships(): HasMany
     {
         return $this->hasMany(UserCompanyMembership::class);
+    }
+
+    /**
+     * The user's active membership for the current company (see
+     * App\Services\Tenancy\CurrentCompany), if any.
+     */
+    public function currentMembership(): ?UserCompanyMembership
+    {
+        $companyId = app(CurrentCompany::class)->id();
+
+        if (! $companyId) {
+            return null;
+        }
+
+        return $this->memberships()
+            ->where('company_id', $companyId)
+            ->where('status', 'active')
+            ->with('role')
+            ->first();
+    }
+
+    /**
+     * Whether the user holds the given atomic permission for the current
+     * company. See .ai/06-AUTHORIZATION.md.
+     */
+    public function hasPermission(string $code): bool
+    {
+        return $this->currentMembership()?->role->hasPermission($code) ?? false;
     }
 
     /**
