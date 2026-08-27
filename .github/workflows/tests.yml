@@ -28,14 +28,6 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
-    env:
-      DB_CONNECTION: pgsql
-      DB_HOST: 127.0.0.1
-      DB_PORT: 5432
-      DB_DATABASE: testing
-      DB_USERNAME: laravel
-      DB_PASSWORD: laravel
-
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -55,7 +47,22 @@ jobs:
         with:
           node-version: '22'
 
+      # Only this step touches the real Postgres service — it validates
+      # that migrations (including Postgres-specific DDL like the
+      # employment_contracts EXCLUDE constraint) actually apply cleanly.
+      # DB_* is scoped here, not at the job level, so it can never leak
+      # into the test run below: the Pest suite is designed to run on
+      # sqlite (see phpunit.xml and .ai/26-PROGRESS.md) specifically so
+      # tests can exercise app-level fallback validation that only
+      # matters where the Postgres-only DB constraint doesn't exist.
       - name: Setup Application
+        env:
+          DB_CONNECTION: pgsql
+          DB_HOST: 127.0.0.1
+          DB_PORT: 5432
+          DB_DATABASE: testing
+          DB_USERNAME: laravel
+          DB_PASSWORD: laravel
         run: composer setup
 
       - name: Run CI Checks
