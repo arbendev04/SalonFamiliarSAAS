@@ -2,12 +2,16 @@
 
 namespace App\Models;
 
+use App\Exceptions\AmbiguousContractException;
 use App\Models\Concerns\BelongsToCompany;
+use Carbon\CarbonInterface;
 use Database\Factories\EmployeeFactory;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 /**
@@ -56,5 +60,29 @@ class Employee extends Model
     public function branch(): BelongsTo
     {
         return $this->belongsTo(Branch::class);
+    }
+
+    /**
+     * @return HasMany<EmploymentContract, $this>
+     */
+    public function contracts(): HasMany
+    {
+        return $this->hasMany(EmploymentContract::class);
+    }
+
+    /**
+     * @return HasOne<PayrollInformation, $this>
+     */
+    public function payrollInformation(): HasOne
+    {
+        return $this->hasOne(PayrollInformation::class);
+    }
+
+    /**
+     * @throws AmbiguousContractException
+     */
+    public function activeContractAt(CarbonInterface $date): ?EmploymentContract
+    {
+        return EmploymentContract::activeForEmployeeAt($this->id, $date);
     }
 }

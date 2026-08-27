@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Form, Head } from '@inertiajs/vue3';
+import { Form, Head, Link } from '@inertiajs/vue3';
 import EmployeeController from '@/actions/App/Http/Controllers/EmployeeController';
 import Heading from '@/components/Heading.vue';
 import InputError from '@/components/InputError.vue';
@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Spinner } from '@/components/ui/spinner';
 import { dashboard } from '@/routes';
-import { index } from '@/routes/employees';
+import { index, show } from '@/routes/employees';
 
 type EmployeeRow = {
     id: string;
@@ -61,7 +61,14 @@ defineOptions({
                         :key="employee.id"
                         class="border-b border-sidebar-border/40 last:border-0 dark:border-sidebar-border/40"
                     >
-                        <td class="p-3">{{ employee.full_name }}</td>
+                        <td class="p-3">
+                            <Link
+                                :href="show(employee.id)"
+                                class="underline underline-offset-4"
+                            >
+                                {{ employee.full_name }}
+                            </Link>
+                        </td>
                         <td class="p-3">{{ employee.national_id }}</td>
                         <td class="p-3">{{ employee.status }}</td>
                         <td class="p-3">{{ employee.hire_date }}</td>
