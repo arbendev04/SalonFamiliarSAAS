@@ -2,13 +2,13 @@
 
 ## Qué es la carpeta `.ai/`
 
-`.ai/` es el cerebro documental del proyecto SalonFamiliarSAAS. Contiene 27 archivos que definen, de forma completa y sin ambigüedad, el dominio, la arquitectura, el modelo de datos, los módulos, los flujos críticos, las decisiones arquitectónicas, el roadmap y el alcance MVP del sistema **antes** de que exista una sola línea de código de producción.
+`.ai/` es el cerebro documental del proyecto SalonFamiliarSAAS. Contiene 28 archivos que definen, de forma completa y sin ambigüedad, el dominio, la arquitectura, el modelo de datos, los módulos, los flujos críticos, las decisiones arquitectónicas, el roadmap, el alcance MVP y el estado de avance real del sistema.
 
 Existe porque este proyecto será construido por múltiples agentes de IA, probablemente en sesiones distintas y sin memoria compartida entre sí. Sin una fuente de verdad escrita, cada agente tendería a redescubrir (o reinventar, de forma inconsistente) las mismas decisiones: cómo se calcula una hora extra, qué tabla es la fuente de verdad de la asistencia, qué permiso hace falta para cerrar una nómina. `.ai/` elimina esa reinvención: es el contrato que todo agente debe leer antes de escribir código y debe mantener actualizado si su trabajo cambia el dominio, la arquitectura o el modelo de datos.
 
 Todo el contenido de `.ai/` proviene de un blueprint de diseño ya aprobado. Ningún archivo de esta carpeta debe contradecirlo; si un agente detecta una inconsistencia entre archivos, debe señalarla explícitamente en vez de resolverla por su cuenta.
 
-## Mapa de lectura: los 27 archivos
+## Mapa de lectura: los 28 archivos
 
 | # | Archivo | Contenido | Cuándo consultarlo |
 |---|---|---|---|
@@ -39,6 +39,7 @@ Todo el contenido de `.ai/` proviene de un blueprint de diseño ya aprobado. Nin
 | 23 | [23-DECISIONS.md](./23-DECISIONS.md) | Registro de 43 ADRs con contexto, decisión, motivo, alternativas, consecuencias | Antes de cuestionar o revertir una decisión arquitectónica ya tomada |
 | 24 | [24-ROADMAP.md](./24-ROADMAP.md) | 16 fases (0–15) con objetivos, tareas, dependencias, criterios de aceptación | Para saber en qué fase está el proyecto y qué depende de qué |
 | 25 | [25-MVP-SCOPE.md](./25-MVP-SCOPE.md) | Qué tareas del roadmap son `[MVP]` (construir primero) vs `[POST-MVP]` (agregar después de salir a producción) | **Antes de implementar cualquier tarea** — para confirmar que no se está adelantando algo `[POST-MVP]` sin que el corte MVP esté completo |
+| 26 | [26-PROGRESS.md](./26-PROGRESS.md) | Estado real de avance por fase, commits, deuda técnica conocida | **Al empezar cualquier sesión de trabajo** — para saber qué fase sigue sin releer el historial de git; se actualiza en cada commit que cierre o avance una fase |
 
 ## Reglas no negociables
 
@@ -61,6 +62,7 @@ Cada regla existe para prevenir un error concreto que este dominio no puede perm
 15. **No asumir reglas legales o porcentajes que no estén documentados.** Ningún porcentaje de recargo, tasa de aporte o regla laboral se hardcodea; todo vive en `labor_rules`/`labor_rule_versions` configurables (ver ADR-007, ADR-020). Si la legislación aplicable no está definida, es un `PENDING DECISION`, no un valor de ejemplo.
 16. **Ante una ambigüedad funcional real, documentarla como `PENDING DECISION` antes de implementar, nunca inventar.** Esta es la regla más importante del proyecto: si el comportamiento correcto no está escrito en ningún archivo `.ai/`, no se adivina ni se implementa "lo más razonable" sin dejar rastro escrito de la ambigüedad.
 17. **Construir el corte `[MVP]` de [25-MVP-SCOPE.md](./25-MVP-SCOPE.md) antes que cualquier tarea `[POST-MVP]`** (ADR-041 en [23-DECISIONS.md](./23-DECISIONS.md)), sin importar el orden en que [24-ROADMAP.md](./24-ROADMAP.md) presente las fases. No implementar Biometrics, Notifications activas ni reportes avanzados antes de que el flujo esencial (turnos → asistencia → nómina → pago) funcione en producción, salvo pedido explícito del propietario del producto.
+18. **Actualizar [26-PROGRESS.md](./26-PROGRESS.md) en el mismo commit que cierra o avanza una fase.** Sin esto, el estado real del proyecto solo existiría en la memoria de sesión de un agente puntual, y la siguiente sesión (u otro agente) tendría que reconstruirlo leyendo todo el historial de git.
 
 ## Protocolo para declarar un nuevo `PENDING DECISION`
 
