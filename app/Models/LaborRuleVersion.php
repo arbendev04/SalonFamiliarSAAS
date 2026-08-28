@@ -55,6 +55,14 @@ class LaborRuleVersion extends Model
     }
 
     /**
+     * @return BelongsTo<User, $this>
+     */
+    public function createdBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'created_by');
+    }
+
+    /**
      * Effective-dated lookup: the labor rule version in force for the
      * given labor rule on the given date, or null when none applies.
      *

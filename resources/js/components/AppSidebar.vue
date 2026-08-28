@@ -6,6 +6,7 @@ import {
     CalendarClock,
     FolderGit2,
     LayoutGrid,
+    Scale,
     Users,
 } from '@lucide/vue';
 import AppLogo from '@/components/AppLogo.vue';
@@ -24,6 +25,7 @@ import {
 import { dashboard } from '@/routes';
 import { index as branchesIndex } from '@/routes/branches';
 import { index as employeesIndex } from '@/routes/employees';
+import { index as laborRulesIndex } from '@/routes/labor-rules';
 import { index as positionsIndex } from '@/routes/positions';
 import { index as schedulesIndex } from '@/routes/schedules';
 import type { NavItem } from '@/types';
@@ -53,6 +55,11 @@ const mainNavItems: NavItem[] = [
         title: 'Plantillas de jornada',
         href: schedulesIndex(),
         icon: CalendarClock,
+    },
+    {
+        title: 'Reglas laborales',
+        href: laborRulesIndex(),
+        icon: Scale,
     },
 ];
 
