@@ -40,6 +40,44 @@ Registrar, de forma viva y siempre actualizada, en qué fase del [24-ROADMAP.md]
 - **`attendance_devices` existe (modelo + migración + factory, Fase 6) pero sin controlador/UI propio, a propósito** — no hay un dispositivo real que gestionar hasta que la Fase 12 (Biometría) conecte hardware de verdad; construir esa UI ahora sería especulativo (YAGNI). Solo sirve hoy como FK opcional de `attendance_events.device_id`.
 - **`SetCurrentCompany` corre después de `SubstituteBindings` en `bootstrap/app.php`** — en la primerísima request de una sesión (nada en `Session` todavía), el route-model-binding implícito de rutas anidadas por empleado (`employees/{employee}/...`) resuelve **antes** de que el scope global `BelongsToCompany` tenga por qué filtrar, así que una request "fría" a una ruta con un `{employee}` de otra empresa puede bindear igual (confirmado concretamente en Fase 7: una `POST` en frío a `employees/{empleado-ajeno}/attendance/events` llega a crear el evento). Detectado dos veces de forma independiente (Fase 6, CRUD de Branch/Position; Fase 7, `AttendanceRecordController`) sin corregirse ninguna de las dos veces por estar fuera de alcance del commit que lo encontró — los tests existentes no lo detectan porque siempre hacen un request de "calentamiento" antes. Necesita su propia sesión de trabajo: reordenar el middleware y correr la suite completa para confirmar que ningún test dependía (sin saberlo) del orden actual.
 
+## Checklist de `PENDING DECISION` abiertas
+
+Consolidado de todas las ambigüedades funcionales reales que siguen sin resolver en `.ai/`, agrupadas por urgencia. Cada una vive en detalle en su archivo de origen (columna "Fuente") — esta tabla es solo el índice de seguimiento; al resolver una, actualizar primero el archivo de origen (reemplazar `PENDING DECISION` por `RESUELTO` + ADR si corresponde) y recién después marcarla acá.
+
+**Grupo 1 — Ya implementadas "alrededor" en Fase 6/7, sin decisión de negocio real todavía**
+
+- [ ] Precedencia entre dos ajustes `APPROVED` que corrigen el mismo evento (`original_event_id` repetido) — hoy gana el más reciente por `created_at`, nunca se fusionan. Fuente: `07-ATTENDANCE.md` (Flujo 2, punto 4).
+- [ ] Descanso real que se abre (`BREAK_START`) pero nunca se cierra — hoy no se resta del tiempo trabajado y no bloquea el cálculo. Fuente: `09-TIME-CALCULATION.md` (Reglas, punto 6).
+
+**Grupo 2 — Bloquea/afecta directamente la Fase 9 (Payroll), la próxima motor crítico después de Overtime**
+
+- [ ] Algoritmo exacto de prorrateo cuando un contrato cambia a mitad de periodo (días calendario / días hábiles / horas planificadas / otro). Fuente: `10-PAYROLL.md` (Reglas, ~línea 49).
+- [ ] Comportamiento del motor ante un empleado sin ningún `attendance_record` ni `novelty_record` que justifique una ausencia dentro del periodo. Fuente: `10-PAYROLL.md` (Casos especiales, ~línea 91).
+- [ ] Si el prorrateo de aportes de seguridad social sigue el mismo criterio que el de nómina (depende de resolver el punto anterior) o tiene su propia regla. Fuente: `11-SOCIAL-SECURITY.md` (~línea 54).
+
+**Grupo 3 — Deferida a propósito en Fase 7, solo relevante cuando Payroll exista**
+
+- [ ] Si publicar una `labor_rule_version` nueva dispara recálculo automático de fechas afectadas o solo bajo demanda, y si aplica retroactivo a periodos de nómina ya `CLOSED`. Fuente: `09-TIME-CALCULATION.md` (Flujos, punto 3).
+
+**Grupo 4 — Biometría (Fase 12, POST-MVP explícito — no urgente)**
+
+- [ ] Marco legal exacto para datos biométricos en Colombia, más allá del régimen genérico de Habeas Data — marcado como bloqueante antes de construir cualquier integración biométrica real. Fuente: `12-BIOMETRICS.md` (Dependencias legales).
+- [ ] Proveedor de hardware biométrico sin elegir (hay una opción recomendada no cerrada: ZKTeco K40/K40 Pro, ADR-042). Fuente: `12-BIOMETRICS.md` (Proveedor(es) de dispositivo).
+- [ ] Política de retención de datos biométricos (plazo de conservación, disparador exacto de borrado). Fuente: `12-BIOMETRICS.md` (~línea 130).
+- [ ] Mecanismo de inferencia del tipo de evento cuando el dispositivo no lo envía explícito — depende de qué proveedor se elija (punto anterior). Fuente: `07-ATTENDANCE.md` (Reglas, punto 4).
+
+**Grupo 5 — Cumplimiento legal general, no bloquea desarrollo pero sí producción real**
+
+- [ ] Detalle de implementación de Habeas Data colombiano (Ley 1581 de 2012, Decreto 1377 de 2013) sin validar contra asesoría legal profesional. Fuente: `20-SECURITY.md` (Cumplimiento normativo).
+
+**Grupo 6 — Infraestructura, para cuando se llegue a Deployment (Fase 15)**
+
+- [ ] RPO/RTO exactos de backups no confirmados contra el SLA real de Laravel Cloud. Fuente: `22-DEPLOYMENT.md` (~línea 100).
+
+**Grupo 7 — Nota arquitectónica, no es una ambigüedad de negocio (YAGNI explícito, no bloquea nada hoy)**
+
+- [ ] Mecanismo de comunicación interna entre módulos: bus de eventos en memoria vs. llamadas directas encadenadas — el propio doc dice "se resuelve cuando la necesidad de desacoplamiento sea real". Fuente: `03-ARCHITECTURE.md` (~línea 92).
+
 ## Decisiones de implementación no obvias (Fase 7 — Time Calculation Engine)
 
 - **Ventana de eventos reales para una fecha**: acotada al/los día(s) calendario que cubre `shifts.date`+`crosses_midnight`, no a un margen de tolerancia inventado — se deriva directamente de que el propio doc atribuye todo el turno a `shifts.date`.
