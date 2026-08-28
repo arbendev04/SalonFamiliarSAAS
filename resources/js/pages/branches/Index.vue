@@ -190,7 +190,7 @@ function deleteBranch(branch: BranchRow) {
                         id="timezone"
                         name="timezone"
                         required
-                        placeholder="America/Bogota"
+                        default-value="America/Bogota"
                     />
                     <InputError :message="errors.timezone" />
                 </div>
