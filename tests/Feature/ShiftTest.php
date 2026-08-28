@@ -45,6 +45,24 @@ class ShiftTest extends TestCase
         $this->employee = Employee::factory()->create(['company_id' => $this->company->id]);
     }
 
+    public function test_the_shifts_index_page_exposes_the_companys_employees_for_reassignment()
+    {
+        $colleague = Employee::factory()->create(['company_id' => $this->company->id, 'full_name' => 'Colega']);
+        $foreignEmployee = Employee::factory()->create(['company_id' => Company::factory()->create()->id]);
+
+        $response = $this->actingAs($this->owner)->get(route('employees.shifts.index', $this->employee));
+
+        $response->assertOk();
+        $response->assertInertia(fn ($page) => $page
+            ->component('employees/Shifts')
+            ->has('employees', 2)
+            ->where('employees', fn ($employees) => collect($employees)
+                ->pluck('id')
+                ->contains($colleague->id)
+                && ! collect($employees)->pluck('id')->contains($foreignEmployee->id)),
+        );
+    }
+
     public function test_a_manual_shift_is_created_and_assigned_to_the_employee()
     {
         $this->actingAs($this->owner)->post(route('employees.shifts.store', $this->employee), [

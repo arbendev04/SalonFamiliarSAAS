@@ -40,6 +40,7 @@ class ShiftController extends Controller
             ]),
             'canManageSchedules' => Gate::allows('schedules.write'),
             'templates' => WorkScheduleTemplate::query()->orderBy('name')->get(['id', 'name']),
+            'employees' => Employee::query()->orderBy('full_name')->get(['id', 'full_name']),
         ]);
     }
 
