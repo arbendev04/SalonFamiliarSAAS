@@ -120,6 +120,14 @@ class Employee extends Model
     }
 
     /**
+     * @return HasMany<AttendanceRecord, $this>
+     */
+    public function attendanceRecords(): HasMany
+    {
+        return $this->hasMany(AttendanceRecord::class);
+    }
+
+    /**
      * @throws AmbiguousScheduleException
      */
     public function activeScheduleAt(CarbonInterface $date): ?EmployeeSchedule
