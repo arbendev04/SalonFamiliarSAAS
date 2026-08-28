@@ -55,6 +55,7 @@ Y = permitido, N = no permitido. Ver también la sección 6 del blueprint aproba
 | contracts.read/write | Y | Y | Y | Y (read/write) | Y (read) | N | Y (read) | Solo propio (read) |
 | schedules/shifts.write | Y | Y | Y | Y | N | Y (equipo) | N | N |
 | attendance.read | Y | Y | Y | Y | Y | Y (equipo) | N | Solo propio |
+| attendance.record | Y | Y | Y | Y | N | Y | N | N |
 | attendance.adjust / approve_adjustment | Y | Y | Y | Y | N | Solicitar solamente | N | N |
 | overtime.request | Y | Y | Y | Y | N | Y | N | Y (propio) |
 | overtime.authorize | Y | Y | Y | Y | N | Y (limitado) | N | N |

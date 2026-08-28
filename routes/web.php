@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\AttendanceEventController;
 use App\Http\Controllers\BranchController;
 use App\Http\Controllers\EmployeeController;
 use App\Http\Controllers\EmployeeScheduleController;
@@ -42,6 +43,9 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::post('employees/{employee}/shifts/generate', [ShiftController::class, 'generate'])->name('employees.shifts.generate');
     Route::post('shifts/{shift}/assignment', [ShiftAssignmentController::class, 'update'])->name('shifts.assignment.update');
     Route::post('shifts/{shift}/breaks', [ShiftBreakController::class, 'store'])->name('shifts.breaks.store');
+
+    Route::get('employees/{employee}/attendance', [AttendanceEventController::class, 'index'])->name('employees.attendance.index');
+    Route::post('employees/{employee}/attendance/events', [AttendanceEventController::class, 'store'])->name('employees.attendance.events.store');
 });
 
 require __DIR__.'/settings.php';

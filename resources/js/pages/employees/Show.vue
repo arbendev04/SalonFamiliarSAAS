@@ -10,6 +10,7 @@ import { Label } from '@/components/ui/label';
 import { Spinner } from '@/components/ui/spinner';
 import { dashboard } from '@/routes';
 import { index } from '@/routes/employees';
+import { index as attendanceIndex } from '@/routes/employees/attendance';
 import { index as shiftsIndex } from '@/routes/employees/shifts';
 
 type EmployeeDetail = {
@@ -61,12 +62,20 @@ defineOptions({
                 :title="employee.full_name"
                 :description="`Cédula ${employee.national_id}`"
             />
-            <Link
-                :href="shiftsIndex(employee.id)"
-                class="text-sm underline underline-offset-4"
-            >
-                Ver turnos
-            </Link>
+            <div class="flex gap-4">
+                <Link
+                    :href="shiftsIndex(employee.id)"
+                    class="text-sm underline underline-offset-4"
+                >
+                    Ver turnos
+                </Link>
+                <Link
+                    :href="attendanceIndex(employee.id)"
+                    class="text-sm underline underline-offset-4"
+                >
+                    Ver asistencia
+                </Link>
+            </div>
         </div>
 
         <div

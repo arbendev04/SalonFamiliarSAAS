@@ -21,7 +21,7 @@ class PermissionSeeder extends Seeder
         'positions' => ['positions.read', 'positions.write'],
         'contracts' => ['contracts.read', 'contracts.write'],
         'schedules' => ['schedules.write'],
-        'attendance' => ['attendance.read', 'attendance.adjust', 'attendance.approve_adjustment'],
+        'attendance' => ['attendance.read', 'attendance.record', 'attendance.adjust', 'attendance.approve_adjustment'],
         'overtime' => ['overtime.request', 'overtime.authorize'],
         'leave' => ['leave.approve'],
         'payroll' => [
