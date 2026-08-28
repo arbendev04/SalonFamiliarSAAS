@@ -1,6 +1,13 @@
 <script setup lang="ts">
 import { Link } from '@inertiajs/vue3';
-import { CalendarClock, FolderGit2, LayoutGrid, Users } from '@lucide/vue';
+import {
+    Briefcase,
+    Building2,
+    CalendarClock,
+    FolderGit2,
+    LayoutGrid,
+    Users,
+} from '@lucide/vue';
 import AppLogo from '@/components/AppLogo.vue';
 import NavFooter from '@/components/NavFooter.vue';
 import NavMain from '@/components/NavMain.vue';
@@ -15,7 +22,9 @@ import {
     SidebarMenuItem,
 } from '@/components/ui/sidebar';
 import { dashboard } from '@/routes';
+import { index as branchesIndex } from '@/routes/branches';
 import { index as employeesIndex } from '@/routes/employees';
+import { index as positionsIndex } from '@/routes/positions';
 import { index as schedulesIndex } from '@/routes/schedules';
 import type { NavItem } from '@/types';
 
@@ -29,6 +38,16 @@ const mainNavItems: NavItem[] = [
         title: 'Empleados',
         href: employeesIndex(),
         icon: Users,
+    },
+    {
+        title: 'Sedes',
+        href: branchesIndex(),
+        icon: Building2,
+    },
+    {
+        title: 'Cargos',
+        href: positionsIndex(),
+        icon: Briefcase,
     },
     {
         title: 'Plantillas de jornada',

@@ -17,6 +17,8 @@ class RoleSeeder extends Seeder
     private const ALL_PERMISSIONS = [
         'companies.manage', 'users.manage', 'roles.manage',
         'employees.read', 'employees.create', 'employees.update',
+        'branches.read', 'branches.write',
+        'positions.read', 'positions.write',
         'contracts.read', 'contracts.write',
         'schedules.write',
         'attendance.read', 'attendance.adjust', 'attendance.approve_adjustment',
@@ -39,6 +41,8 @@ class RoleSeeder extends Seeder
         'COMPANY_OWNER' => [
             'companies.manage', 'users.manage', 'roles.manage',
             'employees.read', 'employees.create', 'employees.update',
+            'branches.read', 'branches.write',
+            'positions.read', 'positions.write',
             'contracts.read', 'contracts.write',
             'schedules.write',
             'attendance.read', 'attendance.adjust', 'attendance.approve_adjustment',
@@ -55,6 +59,8 @@ class RoleSeeder extends Seeder
         'ADMIN' => [
             'users.manage', 'roles.manage',
             'employees.read', 'employees.create', 'employees.update',
+            'branches.read', 'branches.write',
+            'positions.read', 'positions.write',
             'contracts.read', 'contracts.write',
             'schedules.write',
             'attendance.read', 'attendance.adjust', 'attendance.approve_adjustment',
@@ -70,6 +76,8 @@ class RoleSeeder extends Seeder
         ],
         'HR_MANAGER' => [
             'employees.read', 'employees.create', 'employees.update',
+            'branches.read', 'branches.write',
+            'positions.read', 'positions.write',
             'contracts.read', 'contracts.write',
             'schedules.write',
             'attendance.read', 'attendance.adjust', 'attendance.approve_adjustment',
@@ -80,6 +88,8 @@ class RoleSeeder extends Seeder
         ],
         'PAYROLL_MANAGER' => [
             'employees.read',
+            'branches.read',
+            'positions.read',
             'contracts.read',
             'attendance.read',
             'payroll.read', 'payroll.calculate', 'payroll.approve', 'payroll.close',
@@ -88,6 +98,8 @@ class RoleSeeder extends Seeder
         ],
         'SUPERVISOR' => [
             'employees.read',
+            'branches.read',
+            'positions.read',
             'schedules.write',
             'attendance.read', 'attendance.adjust',
             'overtime.request', 'overtime.authorize',
@@ -96,6 +108,8 @@ class RoleSeeder extends Seeder
         ],
         'ACCOUNTANT' => [
             'employees.read',
+            'branches.read',
+            'positions.read',
             'contracts.read',
             'payroll.read',
             'social_security.manage',
