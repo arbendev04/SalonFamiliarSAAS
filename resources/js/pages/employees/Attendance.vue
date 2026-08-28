@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { Form, Head } from '@inertiajs/vue3';
+import { ref } from 'vue';
+import AttendanceAdjustmentController from '@/actions/App/Http/Controllers/AttendanceAdjustmentController';
 import AttendanceEventController from '@/actions/App/Http/Controllers/AttendanceEventController';
 import Heading from '@/components/Heading.vue';
 import InputError from '@/components/InputError.vue';
@@ -23,10 +25,24 @@ type AttendanceEventRow = {
     anomaly: string | null;
 };
 
-defineProps<{
+type AttendanceAdjustmentRow = {
+    id: string;
+    type: string;
+    original_event_id: string | null;
+    corrected_value: Record<string, unknown>;
+    reason: string;
+    status: string;
+    requested_by: string | null;
+    approved_by: string | null;
+};
+
+const props = defineProps<{
     employee: EmployeeDetail;
     events: AttendanceEventRow[];
+    adjustments: AttendanceAdjustmentRow[];
     canRecordAttendance: boolean;
+    canRequestAdjustment: boolean;
+    canApproveAdjustments: boolean;
 }>();
 
 defineOptions({
@@ -50,13 +66,38 @@ const sourceLabels: Record<string, string> = {
     manual: 'Manual',
 };
 
+const adjustmentTypeLabels: Record<string, string> = {
+    modify: 'Modificar',
+    add: 'Agregar',
+    invalidate: 'Invalidar',
+};
+
+const adjustmentStatusLabels: Record<string, string> = {
+    pending: 'Pendiente',
+    approved: 'Aprobado',
+    rejected: 'Rechazado',
+};
+
 function nowForDatetimeLocalInput(): string {
     const now = new Date();
     const offsetMs = now.getTimezoneOffset() * 60 * 1000;
+
     return new Date(now.getTime() - offsetMs).toISOString().slice(0, 16);
 }
 
 const defaultEventDatetime = nowForDatetimeLocalInput();
+
+const adjustmentType = ref('modify');
+
+function eventLabel(eventId: string): string {
+    const event = props.events.find((candidate) => candidate.id === eventId);
+
+    if (!event) {
+        return eventId;
+    }
+
+    return `${eventTypeLabels[event.event_type] ?? event.event_type} — ${event.event_datetime}`;
+}
 </script>
 
 <template>
@@ -171,6 +212,259 @@ const defaultEventDatetime = nowForDatetimeLocalInput();
                 <Button type="submit" :disabled="processing">
                     <Spinner v-if="processing" />
                     Fichar
+                </Button>
+            </Form>
+        </div>
+
+        <div
+            class="overflow-x-auto rounded-xl border border-sidebar-border/70 dark:border-sidebar-border"
+        >
+            <table class="w-full text-left text-sm">
+                <thead
+                    class="border-b border-sidebar-border/70 dark:border-sidebar-border"
+                >
+                    <tr>
+                        <th class="p-3 font-medium">Tipo</th>
+                        <th class="p-3 font-medium">Motivo</th>
+                        <th class="p-3 font-medium">Estado</th>
+                        <th class="p-3 font-medium">Solicitado por</th>
+                        <th class="p-3 font-medium">Aprobado por</th>
+                        <th
+                            v-if="canApproveAdjustments"
+                            class="p-3 font-medium"
+                        >
+                            Acciones
+                        </th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr
+                        v-for="adjustment in adjustments"
+                        :key="adjustment.id"
+                        class="border-b border-sidebar-border/40 last:border-0 dark:border-sidebar-border/40"
+                    >
+                        <td class="p-3">
+                            {{
+                                adjustmentTypeLabels[adjustment.type] ??
+                                adjustment.type
+                            }}
+                        </td>
+                        <td class="p-3">{{ adjustment.reason }}</td>
+                        <td class="p-3">
+                            {{
+                                adjustmentStatusLabels[adjustment.status] ??
+                                adjustment.status
+                            }}
+                        </td>
+                        <td class="p-3">
+                            {{ adjustment.requested_by ?? '—' }}
+                        </td>
+                        <td class="p-3">
+                            {{ adjustment.approved_by ?? '—' }}
+                        </td>
+                        <td
+                            v-if="canApproveAdjustments"
+                            class="p-3"
+                        >
+                            <div
+                                v-if="adjustment.status === 'pending'"
+                                class="flex gap-2"
+                            >
+                                <Form
+                                    v-bind="
+                                        AttendanceAdjustmentController.approve.form(
+                                            adjustment.id,
+                                        )
+                                    "
+                                    v-slot="{ processing: approving }"
+                                >
+                                    <Button
+                                        type="submit"
+                                        size="sm"
+                                        :disabled="approving"
+                                    >
+                                        <Spinner v-if="approving" />
+                                        Aprobar
+                                    </Button>
+                                </Form>
+                                <Form
+                                    v-bind="
+                                        AttendanceAdjustmentController.reject.form(
+                                            adjustment.id,
+                                        )
+                                    "
+                                    v-slot="{ processing: rejecting }"
+                                >
+                                    <Button
+                                        type="submit"
+                                        variant="secondary"
+                                        size="sm"
+                                        :disabled="rejecting"
+                                    >
+                                        <Spinner v-if="rejecting" />
+                                        Rechazar
+                                    </Button>
+                                </Form>
+                            </div>
+                            <span v-else class="text-muted-foreground">—</span>
+                        </td>
+                    </tr>
+                    <tr v-if="adjustments.length === 0">
+                        <td
+                            class="p-3 text-muted-foreground"
+                            :colspan="canApproveAdjustments ? 6 : 5"
+                        >
+                            Todavía no hay ajustes solicitados.
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div
+            v-if="canRequestAdjustment"
+            class="max-w-md space-y-4 rounded-xl border border-sidebar-border/70 p-4 dark:border-sidebar-border"
+        >
+            <Heading variant="small" title="Solicitar ajuste" />
+
+            <Form
+                v-bind="
+                    AttendanceAdjustmentController.store.form(employee.id)
+                "
+                reset-on-success
+                v-slot="{ errors, processing }"
+                class="grid gap-4"
+            >
+                <div class="grid gap-2">
+                    <Label for="adjustment_type">Tipo de ajuste</Label>
+                    <select
+                        id="adjustment_type"
+                        name="type"
+                        v-model="adjustmentType"
+                        required
+                        class="h-9 rounded-md border border-input bg-transparent px-2 text-sm"
+                    >
+                        <option value="modify">Modificar</option>
+                        <option value="add">Agregar</option>
+                        <option value="invalidate">Invalidar</option>
+                    </select>
+                    <InputError :message="errors.type" />
+                </div>
+
+                <div
+                    v-if="adjustmentType === 'modify' || adjustmentType === 'invalidate'"
+                    class="grid gap-2"
+                >
+                    <Label for="original_event_id">Evento original</Label>
+                    <select
+                        id="original_event_id"
+                        name="original_event_id"
+                        required
+                        class="h-9 rounded-md border border-input bg-transparent px-2 text-sm"
+                    >
+                        <option
+                            v-for="event in events"
+                            :key="event.id"
+                            :value="event.id"
+                        >
+                            {{ eventLabel(event.id) }}
+                        </option>
+                    </select>
+                    <InputError :message="errors.original_event_id" />
+                </div>
+
+                <template v-if="adjustmentType === 'add'">
+                    <div class="grid gap-2">
+                        <Label for="corrected_event_type">
+                            Tipo de marcación a agregar
+                        </Label>
+                        <select
+                            id="corrected_event_type"
+                            name="corrected_value[event_type]"
+                            required
+                            class="h-9 rounded-md border border-input bg-transparent px-2 text-sm"
+                        >
+                            <option value="clock_in">Entrada</option>
+                            <option value="break_start">
+                                Inicio de descanso
+                            </option>
+                            <option value="break_end">Fin de descanso</option>
+                            <option value="clock_out">Salida</option>
+                        </select>
+                        <InputError
+                            :message="errors['corrected_value.event_type']"
+                        />
+                    </div>
+
+                    <div class="grid gap-2">
+                        <Label for="corrected_event_datetime">
+                            Fecha y hora a agregar
+                        </Label>
+                        <Input
+                            id="corrected_event_datetime"
+                            type="datetime-local"
+                            name="corrected_value[event_datetime]"
+                            required
+                        />
+                        <InputError
+                            :message="
+                                errors['corrected_value.event_datetime']
+                            "
+                        />
+                    </div>
+                </template>
+
+                <div
+                    v-if="adjustmentType === 'modify'"
+                    class="grid gap-2"
+                >
+                    <Label for="corrected_event_datetime_modify">
+                        Fecha y hora correcta
+                    </Label>
+                    <Input
+                        id="corrected_event_datetime_modify"
+                        type="datetime-local"
+                        name="corrected_value[event_datetime]"
+                        required
+                    />
+                    <InputError
+                        :message="errors['corrected_value.event_datetime']"
+                    />
+                </div>
+
+                <div
+                    v-if="adjustmentType === 'invalidate'"
+                    class="grid gap-2"
+                >
+                    <Label for="corrected_value_reason_code">
+                        Motivo de invalidación
+                    </Label>
+                    <Input
+                        id="corrected_value_reason_code"
+                        name="corrected_value[reason_code]"
+                        required
+                        placeholder="Ej: marcación duplicada por error"
+                    />
+                    <InputError
+                        :message="errors['corrected_value.reason_code']"
+                    />
+                </div>
+
+                <div class="grid gap-2">
+                    <Label for="reason">Motivo del ajuste</Label>
+                    <Input
+                        id="reason"
+                        name="reason"
+                        required
+                        maxlength="500"
+                        placeholder="Ej: olvidó marcar la salida"
+                    />
+                    <InputError :message="errors.reason" />
+                </div>
+
+                <Button type="submit" :disabled="processing">
+                    <Spinner v-if="processing" />
+                    Solicitar ajuste
                 </Button>
             </Form>
         </div>

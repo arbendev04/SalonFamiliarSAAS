@@ -34,18 +34,33 @@ class AttendanceEventRecorder
      */
     private const DEDUPLICATION_WINDOW_MINUTES = 1;
 
+    /**
+     * @param  array<string, mixed>|null  $extraMetadata  Additional metadata
+     *                                                    merged into the stored row on a fresh insert (e.g. the
+     *                                                    `created_from_adjustment_id` link set by
+     *                                                    AttendanceAdjustmentService when an `add` adjustment is
+     *                                                    approved). Ignored when a duplicate is matched instead of
+     *                                                    inserted, since no new row is written in that case. Optional and
+     *                                                    appended last to stay backward compatible with existing callers.
+     */
     public function record(
         Employee $employee,
         string $eventType,
         Carbon $eventDatetime,
         string $source,
         ?string $deviceId = null,
+        ?array $extraMetadata = null,
     ): AttendanceEvent {
         $duplicate = $this->findDuplicate($employee, $eventType, $eventDatetime);
 
         if ($duplicate) {
             return $duplicate;
         }
+
+        $metadata = array_merge(
+            $this->anomalyMetadata($employee, $eventType, $eventDatetime) ?? [],
+            $extraMetadata ?? [],
+        );
 
         return AttendanceEvent::create([
             'company_id' => $employee->company_id,
@@ -54,7 +69,7 @@ class AttendanceEventRecorder
             'event_datetime' => $eventDatetime,
             'source' => $source,
             'device_id' => $deviceId,
-            'metadata' => $this->anomalyMetadata($employee, $eventType, $eventDatetime),
+            'metadata' => $metadata === [] ? null : $metadata,
         ]);
     }
 

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Http\Requests\StoreAttendanceEventRequest;
+use App\Models\AttendanceAdjustment;
 use App\Models\AttendanceEvent;
 use App\Models\Employee;
 use App\Services\Attendance\AttendanceEventRecorder;
@@ -23,6 +24,12 @@ class AttendanceEventController extends Controller
             ->orderByDesc('event_datetime')
             ->get();
 
+        $adjustments = AttendanceAdjustment::query()
+            ->where('employee_id', $employee->id)
+            ->with(['requestedBy:id,name', 'approvedBy:id,name'])
+            ->orderByDesc('created_at')
+            ->get();
+
         return Inertia::render('employees/Attendance', [
             'employee' => $employee->only(['id', 'full_name']),
             'events' => $events->map(fn (AttendanceEvent $event) => [
@@ -32,7 +39,19 @@ class AttendanceEventController extends Controller
                 'source' => $event->source,
                 'anomaly' => $event->metadata['anomaly'] ?? null,
             ]),
+            'adjustments' => $adjustments->map(fn (AttendanceAdjustment $adjustment) => [
+                'id' => $adjustment->id,
+                'type' => $adjustment->type,
+                'original_event_id' => $adjustment->original_event_id,
+                'corrected_value' => $adjustment->corrected_value,
+                'reason' => $adjustment->reason,
+                'status' => $adjustment->status,
+                'requested_by' => $adjustment->requestedBy?->name,
+                'approved_by' => $adjustment->approvedBy?->name,
+            ]),
             'canRecordAttendance' => Gate::allows('attendance.record'),
+            'canRequestAdjustment' => Gate::allows('attendance.adjust'),
+            'canApproveAdjustments' => Gate::allows('attendance.approve_adjustment'),
         ]);
     }
 

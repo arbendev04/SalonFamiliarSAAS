@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\AttendanceAdjustmentController;
 use App\Http\Controllers\AttendanceEventController;
 use App\Http\Controllers\BranchController;
 use App\Http\Controllers\EmployeeController;
@@ -46,6 +47,9 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
     Route::get('employees/{employee}/attendance', [AttendanceEventController::class, 'index'])->name('employees.attendance.index');
     Route::post('employees/{employee}/attendance/events', [AttendanceEventController::class, 'store'])->name('employees.attendance.events.store');
+    Route::post('employees/{employee}/attendance/adjustments', [AttendanceAdjustmentController::class, 'store'])->name('employees.attendance.adjustments.store');
+    Route::post('attendance/adjustments/{adjustment}/approve', [AttendanceAdjustmentController::class, 'approve'])->name('attendance.adjustments.approve');
+    Route::post('attendance/adjustments/{adjustment}/reject', [AttendanceAdjustmentController::class, 'reject'])->name('attendance.adjustments.reject');
 });
 
 require __DIR__.'/settings.php';
