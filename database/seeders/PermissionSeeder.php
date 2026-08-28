@@ -38,6 +38,8 @@ class PermissionSeeder extends Seeder
         'biometrics' => ['biometrics.enroll', 'biometrics.delete_data'],
         'audit' => ['audit.read'],
         'settings' => ['settings.manage'],
+        'labor_rules' => ['labor_rules.read', 'labor_rules.write'],
+        'time_calculation' => ['time_calculation.read', 'time_calculation.calculate'],
     ];
 
     public function run(): void

@@ -31,6 +31,8 @@ class RoleSeeder extends Seeder
         'biometrics.enroll', 'biometrics.delete_data',
         'audit.read',
         'settings.manage',
+        'labor_rules.read', 'labor_rules.write',
+        'time_calculation.read', 'time_calculation.calculate',
     ];
 
     /**
@@ -55,6 +57,8 @@ class RoleSeeder extends Seeder
             'biometrics.enroll', 'biometrics.delete_data',
             'audit.read',
             'settings.manage',
+            'labor_rules.read', 'labor_rules.write',
+            'time_calculation.read', 'time_calculation.calculate',
         ],
         'ADMIN' => [
             'users.manage', 'roles.manage',
@@ -73,6 +77,8 @@ class RoleSeeder extends Seeder
             'biometrics.enroll', 'biometrics.delete_data',
             'audit.read',
             'settings.manage',
+            'labor_rules.read', 'labor_rules.write',
+            'time_calculation.read', 'time_calculation.calculate',
         ],
         'HR_MANAGER' => [
             'employees.read', 'employees.create', 'employees.update',
@@ -85,6 +91,7 @@ class RoleSeeder extends Seeder
             'leave.approve',
             'biometrics.enroll',
             'reports.read', 'reports.export',
+            'time_calculation.read', 'time_calculation.calculate',
         ],
         'PAYROLL_MANAGER' => [
             'employees.read',
@@ -95,6 +102,8 @@ class RoleSeeder extends Seeder
             'payroll.read', 'payroll.calculate', 'payroll.approve', 'payroll.close',
             'social_security.manage',
             'reports.read', 'reports.export',
+            'labor_rules.read',
+            'time_calculation.read', 'time_calculation.calculate',
         ],
         'SUPERVISOR' => [
             'employees.read',
@@ -105,6 +114,7 @@ class RoleSeeder extends Seeder
             'overtime.request', 'overtime.authorize',
             'leave.approve',
             'reports.read', 'reports.export',
+            'time_calculation.read',
         ],
         'ACCOUNTANT' => [
             'employees.read',
@@ -114,6 +124,7 @@ class RoleSeeder extends Seeder
             'payroll.read',
             'social_security.manage',
             'reports.read', 'reports.export',
+            'time_calculation.read',
         ],
         'EMPLOYEE' => [
             'overtime.request',
