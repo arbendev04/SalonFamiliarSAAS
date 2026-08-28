@@ -2,14 +2,20 @@
 
 namespace App\Services\Attendance;
 
+use App\Exceptions\AmbiguousLaborRuleVersionException;
 use App\Exceptions\InvalidAttendanceAdjustmentStatusException;
+use App\Exceptions\MissingCriticalAttendanceEventException;
+use App\Exceptions\MissingLaborRuleParameterException;
+use App\Exceptions\NoActiveLaborRuleVersionException;
 use App\Models\AttendanceAdjustment;
 use App\Models\AttendanceEvent;
 use App\Models\Employee;
 use App\Models\User;
 use App\Services\Audit\AuditLogger;
+use App\Services\TimeCalculation\TimeCalculationEngine;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Implements Flujo 2 of .ai/07-ATTENDANCE.md: the formal correction
@@ -21,12 +27,22 @@ use Illuminate\Support\Facades\DB;
  * public method here wraps its business write and the audit call in one
  * DB::transaction, replicating the exact pattern in
  * ShiftAssignmentController::update().
+ *
+ * Per .ai/07-ATTENDANCE.md (Flujo 2, step 6) and .ai/09-TIME-CALCULATION.md,
+ * an adjustment that becomes `approved` — whether auto-approved in create()
+ * or approved later via approve() — must also trigger
+ * TimeCalculationEngine::calculateForDate() for the date it affects. See
+ * triggerRecalculationForApprovedAdjustment() for why that call runs AFTER
+ * the adjustment's own DB::transaction() has committed, and why its
+ * blocking exceptions are caught rather than allowed to fail the
+ * create()/approve() call itself.
  */
 class AttendanceAdjustmentService
 {
     public function __construct(
         private readonly AttendanceEventRecorder $recorder,
         private readonly AuditLogger $auditLogger,
+        private readonly TimeCalculationEngine $timeCalculationEngine,
     ) {}
 
     /**
@@ -42,7 +58,7 @@ class AttendanceAdjustmentService
         array $correctedValue,
         string $reason,
     ): AttendanceAdjustment {
-        return DB::transaction(function () use ($employee, $requestedBy, $type, $originalEvent, $originalValue, $correctedValue, $reason) {
+        $adjustment = DB::transaction(function () use ($employee, $requestedBy, $type, $originalEvent, $originalValue, $correctedValue, $reason) {
             // ADR-032: auto-approval is derived directly from the
             // requester's own RBAC grant, never from a role name hardcoded
             // here, so this can never drift out of sync with RoleSeeder.
@@ -83,6 +99,12 @@ class AttendanceAdjustmentService
 
             return $adjustment;
         });
+
+        if ($adjustment->status === 'approved') {
+            $this->triggerRecalculationForApprovedAdjustment($employee, $adjustment);
+        }
+
+        return $adjustment;
     }
 
     /**
@@ -94,7 +116,7 @@ class AttendanceAdjustmentService
             throw new InvalidAttendanceAdjustmentStatusException($adjustment->id, $adjustment->status);
         }
 
-        return DB::transaction(function () use ($adjustment, $approvedBy, $note) {
+        $adjustment = DB::transaction(function () use ($adjustment, $approvedBy, $note) {
             $adjustment->update([
                 'status' => 'approved',
                 'approved_by' => $approvedBy->id,
@@ -116,6 +138,10 @@ class AttendanceAdjustmentService
 
             return $adjustment;
         });
+
+        $this->triggerRecalculationForApprovedAdjustment($adjustment->employee, $adjustment);
+
+        return $adjustment;
     }
 
     /**
@@ -165,5 +191,61 @@ class AttendanceAdjustmentService
             source: 'manual',
             extraMetadata: ['created_from_adjustment_id' => $adjustment->id],
         );
+    }
+
+    /**
+     * Shared by both places an adjustment can become `approved` — the
+     * auto-approve branch of create() and approve() itself — so recalculation
+     * is always triggered through the exact same path per
+     * .ai/07-ATTENDANCE.md (Flujo 2, step 6).
+     *
+     * The affected date is the original event's date for `modify`/
+     * `invalidate` (the correction is expressed against an existing
+     * marking), or corrected_value['event_datetime'] for `add` (there is no
+     * original event to read a date from).
+     *
+     * Deliberately called AFTER the caller's own DB::transaction() has
+     * committed, never nested inside it. TimeCalculationEngine::
+     * calculateForDate() opens its own internal DB::transaction() for the
+     * AttendanceRecord + TimeCalculationRun writes; Laravel would run that
+     * as a savepoint if nested here, and a caught exception from it would,
+     * in principle, only roll back to that savepoint rather than the outer
+     * transaction. But relying on that is unnecessary complexity for no
+     * benefit: by calling this post-commit instead, the adjustment's own
+     * write (company_id, status, audit log — the part that IS in the
+     * acceptance criteria and must never fail silently) is already durable
+     * on disk before recalculation is even attempted, so nothing this
+     * method does or throws can ever affect it, regardless of driver or
+     * transaction-nesting behavior.
+     *
+     * Approving/creating an adjustment must succeed independently of Time
+     * Calculation's configuration state: a company may not have set up a
+     * labor_rule_version yet, or the recalculation may hit a blocking data
+     * issue elsewhere on that date (missing critical event, ambiguous rule
+     * version, etc.) that has nothing to do with whether THIS specific
+     * correction was recorded correctly. Those are the exact blocking
+     * exceptions TimeCalculationEngine documents itself as throwing. This
+     * is the closest existing analogue to the "señal de ajuste de nómina
+     * pendiente" language in the docs, but that signal has nowhere to live
+     * yet — there is no payroll module (Fase 9) to receive it. Until then
+     * this is logged-and-skipped, not silently ignored: a future phase can
+     * promote this into a real signal/notification once one exists.
+     */
+    private function triggerRecalculationForApprovedAdjustment(Employee $employee, AttendanceAdjustment $adjustment): void
+    {
+        $date = $adjustment->type === 'add'
+            ? Carbon::parse($adjustment->corrected_value['event_datetime'])
+            : Carbon::parse($adjustment->originalEvent->event_datetime);
+
+        try {
+            $this->timeCalculationEngine->calculateForDate($employee, $date->startOfDay());
+        } catch (NoActiveLaborRuleVersionException|AmbiguousLaborRuleVersionException|MissingLaborRuleParameterException|MissingCriticalAttendanceEventException $e) {
+            Log::warning('Recalculation skipped after attendance adjustment approval: '.$e->getMessage(), [
+                'adjustment_id' => $adjustment->id,
+                'employee_id' => $employee->id,
+                'date' => $date->toDateString(),
+                'exception' => $e::class,
+            ]);
+        }
     }
 }
