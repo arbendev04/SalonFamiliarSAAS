@@ -16,6 +16,8 @@ type DayRow = {
     start_time: string;
     end_time: string;
     crosses_midnight: boolean;
+    break_start_time: string | null;
+    break_end_time: string | null;
 };
 
 type TemplateRow = {
@@ -52,24 +54,25 @@ type DayFormRow = {
     start_time: string;
     end_time: string;
     crosses_midnight: boolean;
+    break_start_time: string;
+    break_end_time: string;
 };
 
-const days = ref<DayFormRow[]>([
-    {
+function newDayRow(): DayFormRow {
+    return {
         day_of_week: 1,
         start_time: '06:00',
         end_time: '14:00',
         crosses_midnight: false,
-    },
-]);
+        break_start_time: '',
+        break_end_time: '',
+    };
+}
+
+const days = ref<DayFormRow[]>([newDayRow()]);
 
 function addDay() {
-    days.value.push({
-        day_of_week: 1,
-        start_time: '06:00',
-        end_time: '14:00',
-        crosses_midnight: false,
-    });
+    days.value.push(newDayRow());
 }
 
 function removeDay(index: number) {
@@ -115,6 +118,12 @@ function removeDay(index: number) {
                                 {{ day.start_time }}–{{ day.end_time
                                 }}<span v-if="day.crosses_midnight">
                                     (nocturno)</span
+                                ><span
+                                    v-if="day.break_start_time && day.break_end_time"
+                                >
+                                    (descanso {{ day.break_start_time }}–{{
+                                        day.break_end_time
+                                    }})</span
                                 >
                             </span>
                         </td>
@@ -154,7 +163,7 @@ function removeDay(index: number) {
                     <div
                         v-for="(day, index) in days"
                         :key="index"
-                        class="grid grid-cols-5 items-end gap-2 rounded-lg border border-sidebar-border/50 p-3"
+                        class="grid grid-cols-2 items-end gap-2 rounded-lg border border-sidebar-border/50 p-3 md:grid-cols-7"
                     >
                         <div class="grid gap-1">
                             <Label>Día</Label>
@@ -185,6 +194,22 @@ function removeDay(index: number) {
                             <Input
                                 v-model="day.end_time"
                                 :name="`days[${index}][end_time]`"
+                                type="time"
+                            />
+                        </div>
+                        <div class="grid gap-1">
+                            <Label>Descanso inicio</Label>
+                            <Input
+                                v-model="day.break_start_time"
+                                :name="`days[${index}][break_start_time]`"
+                                type="time"
+                            />
+                        </div>
+                        <div class="grid gap-1">
+                            <Label>Descanso fin</Label>
+                            <Input
+                                v-model="day.break_end_time"
+                                :name="`days[${index}][break_end_time]`"
                                 type="time"
                             />
                         </div>

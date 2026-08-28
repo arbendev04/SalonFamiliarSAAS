@@ -29,6 +29,8 @@ class WorkScheduleDay extends Model
         'start_time',
         'end_time',
         'crosses_midnight',
+        'break_start_time',
+        'break_end_time',
     ];
 
     /**

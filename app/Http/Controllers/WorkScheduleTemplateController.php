@@ -38,6 +38,8 @@ class WorkScheduleTemplateController extends Controller
                     'start_time' => $day['start_time'],
                     'end_time' => $day['end_time'],
                     'crosses_midnight' => $day['crosses_midnight'] ?? false,
+                    'break_start_time' => $day['break_start_time'] ?? null,
+                    'break_end_time' => $day['break_end_time'] ?? null,
                 ]);
             }
         });

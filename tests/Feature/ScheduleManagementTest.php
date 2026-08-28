@@ -12,6 +12,7 @@ use App\Models\WorkScheduleTemplate;
 use Database\Seeders\PermissionSeeder;
 use Database\Seeders\RoleSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use Tests\TestCase;
 
 class ScheduleManagementTest extends TestCase
@@ -59,6 +60,67 @@ class ScheduleManagementTest extends TestCase
 
         $this->assertSame($this->company->id, $template->company_id);
         $this->assertSame(2, $template->days()->count());
+    }
+
+    public function test_a_break_window_outside_the_days_start_and_end_time_is_rejected()
+    {
+        $this->actingAs($this->owner)->post(route('schedules.store'), [
+            'name' => 'Turno panadería',
+            'days' => [
+                [
+                    'day_of_week' => 1,
+                    'start_time' => '06:00',
+                    'end_time' => '14:00',
+                    'break_start_time' => '15:00',
+                    'break_end_time' => '15:30',
+                ],
+            ],
+        ])->assertSessionHasErrors('days.0.break_start_time');
+
+        $this->assertSame(0, WorkScheduleTemplate::query()->count());
+    }
+
+    public function test_only_one_of_break_start_time_or_break_end_time_present_is_rejected()
+    {
+        $this->actingAs($this->owner)->post(route('schedules.store'), [
+            'name' => 'Turno panadería',
+            'days' => [
+                [
+                    'day_of_week' => 1,
+                    'start_time' => '06:00',
+                    'end_time' => '14:00',
+                    'break_start_time' => '10:00',
+                ],
+            ],
+        ])->assertSessionHasErrors('days.0.break_start_time');
+
+        $this->assertSame(0, WorkScheduleTemplate::query()->count());
+    }
+
+    public function test_a_break_window_valid_across_a_crosses_midnight_day_is_accepted()
+    {
+        $this->actingAs($this->owner)->post(route('schedules.store'), [
+            'name' => 'Turno nocturno',
+            'days' => [
+                [
+                    'day_of_week' => 2,
+                    'start_time' => '22:00',
+                    'end_time' => '06:00',
+                    'crosses_midnight' => true,
+                    // 00:30 is earlier than start_time as a clock time, so
+                    // it correctly anchors to the day after start — inside
+                    // the wrapped 22:00->06:00 window.
+                    'break_start_time' => '00:30',
+                    'break_end_time' => '01:00',
+                ],
+            ],
+        ])->assertRedirect()->assertSessionHasNoErrors();
+
+        $template = WorkScheduleTemplate::query()->where('name', 'Turno nocturno')->firstOrFail();
+        $day = $template->days()->firstOrFail();
+
+        $this->assertSame('00:30', Carbon::parse($day->break_start_time)->format('H:i'));
+        $this->assertSame('01:00', Carbon::parse($day->break_end_time)->format('H:i'));
     }
 
     public function test_assigning_a_new_template_closes_the_previous_assignment()
