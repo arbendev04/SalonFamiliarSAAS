@@ -46,6 +46,8 @@ Esquema autoritativo completo en [04-DOMAIN-MODEL.md](./04-DOMAIN-MODEL.md) y [0
 3. **El exceso de tiempo trabajado sobre lo planificado nunca se asume automáticamente como hora extra pagable.** Depende de las tolerancias, el redondeo y los límites configurables en `labor_rule_versions` vigente para esa fecha. Si el exceso supera el umbral configurado, se crea/actualiza un `overtime_records` en estado `DETECTED` — el resto del ciclo de vida de esa hora extra (solicitud, autorización, pago) es responsabilidad del módulo Overtime y de [10-PAYROLL.md](./10-PAYROLL.md).
 4. **El motor nunca modifica `attendance_events`.** Es estrictamente de solo lectura sobre ellos (ver Seguridad).
 5. **Ninguna regla laboral se hardcodea.** Todo parámetro (tolerancia, redondeo, ventana nocturna, definición de festivo/dominical a efectos de tiempo) vive en `labor_rule_versions.parameters`, resuelto por vigencia (ADR-007, ADR-020).
+6. **Emparejamiento de descansos reales dentro del tramo trabajado.** El tiempo de descanso real se resta del tiempo trabajado únicamente para pares `BREAK_START`→`BREAK_END` completos dentro del rango `CLOCK_IN`→`CLOCK_OUT` resuelto.
+   - **PENDING DECISION**: ¿qué hace el motor con un `BREAK_START` sin un `BREAK_END` posterior dentro del mismo tramo (el empleado nunca marcó el regreso del descanso)? El blueprint solo declara `CLOCK_OUT` como evento crítico cuya ausencia bloquea el cálculo (ver Errores); no dice si un descanso sin cerrar debe bloquear igual o tratarse de otra forma. Hasta que se resuelva, el motor implementa el criterio más simple y explícito: **el descanso sin `BREAK_END` no se resta** (esos minutos cuentan como trabajados) y **no bloquea** el cálculo de esa fecha.
 
 ## Flujos
 
