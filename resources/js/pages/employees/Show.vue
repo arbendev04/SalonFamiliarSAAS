@@ -12,6 +12,7 @@ import { dashboard } from '@/routes';
 import { index } from '@/routes/employees';
 import { index as attendanceIndex } from '@/routes/employees/attendance';
 import { index as shiftsIndex } from '@/routes/employees/shifts';
+import { index as timeCalculationIndex } from '@/routes/employees/time-calculation';
 
 type EmployeeDetail = {
     id: string;
@@ -74,6 +75,12 @@ defineOptions({
                     class="text-sm underline underline-offset-4"
                 >
                     Ver asistencia
+                </Link>
+                <Link
+                    :href="timeCalculationIndex(employee.id)"
+                    class="text-sm underline underline-offset-4"
+                >
+                    Ver cálculo de tiempo
                 </Link>
             </div>
         </div>
