@@ -27,6 +27,13 @@ class LaborRuleVersionFactory extends Factory
             'parameters' => [
                 'tolerance_minutes' => 15,
                 'rounding_minutes' => 5,
+                // Money-side keys, added in Fase 9 (Payroll) as the first real
+                // consumer of labor_rule_versions.parameters beyond time-only
+                // classification. Container-schema addition only — no legal
+                // value is asserted by these defaults, callers must configure
+                // their own per rule #15 in .ai/AGENTS.md.
+                'monthly_hours_divisor' => 240,
+                'overtime_surcharge_pct' => 0.25,
             ],
             'created_by' => null,
         ];
