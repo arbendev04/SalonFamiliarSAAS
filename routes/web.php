@@ -11,7 +11,10 @@ use App\Http\Controllers\HolidayController;
 use App\Http\Controllers\LaborRuleVersionController;
 use App\Http\Controllers\LeaveRecordController;
 use App\Http\Controllers\OvertimeRecordController;
+use App\Http\Controllers\PayrollAdjustmentController;
+use App\Http\Controllers\PayrollDeductionPlanController;
 use App\Http\Controllers\PayrollInformationController;
+use App\Http\Controllers\PayrollPeriodController;
 use App\Http\Controllers\PositionController;
 use App\Http\Controllers\ShiftAssignmentController;
 use App\Http\Controllers\ShiftBreakController;
@@ -77,6 +80,18 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::post('overtime-records/{record}/authorize', [OvertimeRecordController::class, 'authorize'])->name('overtime-records.authorize');
     Route::post('overtime-records/{record}/reject', [OvertimeRecordController::class, 'reject'])->name('overtime-records.reject');
     Route::post('overtime-records/{record}/mark-paid', [OvertimeRecordController::class, 'markPaid'])->name('overtime-records.mark-paid');
+
+    Route::get('payroll/periods', [PayrollPeriodController::class, 'index'])->name('payroll.periods.index');
+    Route::post('payroll/periods', [PayrollPeriodController::class, 'store'])->name('payroll.periods.store');
+    Route::get('payroll/periods/{period}', [PayrollPeriodController::class, 'show'])->name('payroll.periods.show');
+    Route::post('payroll/periods/{period}/calculate', [PayrollPeriodController::class, 'calculate'])->name('payroll.periods.calculate');
+    Route::post('payroll/periods/{period}/approve', [PayrollPeriodController::class, 'approve'])->name('payroll.periods.approve');
+    Route::post('payroll/periods/{period}/close', [PayrollPeriodController::class, 'close'])->name('payroll.periods.close');
+    Route::post('payroll/periods/{period}/reopen', [PayrollPeriodController::class, 'reopen'])->name('payroll.periods.reopen');
+    Route::post('payroll/entries/{entry}/adjustments', [PayrollAdjustmentController::class, 'store'])->name('payroll.entries.adjustments.store');
+
+    Route::get('employees/{employee}/deduction-plans', [PayrollDeductionPlanController::class, 'index'])->name('employees.deduction-plans.index');
+    Route::post('employees/{employee}/deduction-plans', [PayrollDeductionPlanController::class, 'store'])->name('employees.deduction-plans.store');
 });
 
 require __DIR__.'/settings.php';

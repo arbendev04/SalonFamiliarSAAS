@@ -11,6 +11,7 @@ import { Spinner } from '@/components/ui/spinner';
 import { dashboard } from '@/routes';
 import { index } from '@/routes/employees';
 import { index as attendanceIndex } from '@/routes/employees/attendance';
+import { index as deductionPlansIndex } from '@/routes/employees/deduction-plans';
 import { index as leaveRecordsIndex } from '@/routes/employees/leave-records';
 import { index as overtimeRecordsIndex } from '@/routes/employees/overtime-records';
 import { index as shiftsIndex } from '@/routes/employees/shifts';
@@ -95,6 +96,12 @@ defineOptions({
                     class="text-sm underline underline-offset-4"
                 >
                     Ver horas extra
+                </Link>
+                <Link
+                    :href="deductionPlansIndex(employee.id)"
+                    class="text-sm underline underline-offset-4"
+                >
+                    Ver planes de deducción
                 </Link>
             </div>
         </div>

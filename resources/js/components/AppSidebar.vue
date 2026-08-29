@@ -9,6 +9,7 @@ import {
     PartyPopper,
     Scale,
     Users,
+    Wallet,
 } from '@lucide/vue';
 import AppLogo from '@/components/AppLogo.vue';
 import NavFooter from '@/components/NavFooter.vue';
@@ -28,6 +29,7 @@ import { index as branchesIndex } from '@/routes/branches';
 import { index as employeesIndex } from '@/routes/employees';
 import { index as holidaysIndex } from '@/routes/holidays';
 import { index as laborRulesIndex } from '@/routes/labor-rules';
+import { index as payrollPeriodsIndex } from '@/routes/payroll/periods';
 import { index as positionsIndex } from '@/routes/positions';
 import { index as schedulesIndex } from '@/routes/schedules';
 import type { NavItem } from '@/types';
@@ -67,6 +69,11 @@ const mainNavItems: NavItem[] = [
         title: 'Festivos',
         href: holidaysIndex(),
         icon: PartyPopper,
+    },
+    {
+        title: 'Nómina',
+        href: payrollPeriodsIndex(),
+        icon: Wallet,
     },
 ];
 
