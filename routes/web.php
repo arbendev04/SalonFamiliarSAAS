@@ -7,6 +7,7 @@ use App\Http\Controllers\BranchController;
 use App\Http\Controllers\EmployeeController;
 use App\Http\Controllers\EmployeeScheduleController;
 use App\Http\Controllers\EmploymentContractController;
+use App\Http\Controllers\HolidayController;
 use App\Http\Controllers\LaborRuleVersionController;
 use App\Http\Controllers\PayrollInformationController;
 use App\Http\Controllers\PositionController;
@@ -42,6 +43,11 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
     Route::get('labor-rules', [LaborRuleVersionController::class, 'index'])->name('labor-rules.index');
     Route::post('labor-rules/versions', [LaborRuleVersionController::class, 'store'])->name('labor-rules.versions.store');
+
+    Route::get('holidays', [HolidayController::class, 'index'])->name('holidays.index');
+    Route::post('holidays', [HolidayController::class, 'store'])->name('holidays.store');
+    Route::put('holidays/{holiday}', [HolidayController::class, 'update'])->name('holidays.update');
+    Route::delete('holidays/{holiday}', [HolidayController::class, 'destroy'])->name('holidays.destroy');
 
     Route::post('employees/{employee}/schedule', [EmployeeScheduleController::class, 'store'])->name('employees.schedule.store');
     Route::get('employees/{employee}/shifts', [ShiftController::class, 'index'])->name('employees.shifts.index');

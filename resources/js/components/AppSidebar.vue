@@ -6,6 +6,7 @@ import {
     CalendarClock,
     FolderGit2,
     LayoutGrid,
+    PartyPopper,
     Scale,
     Users,
 } from '@lucide/vue';
@@ -25,6 +26,7 @@ import {
 import { dashboard } from '@/routes';
 import { index as branchesIndex } from '@/routes/branches';
 import { index as employeesIndex } from '@/routes/employees';
+import { index as holidaysIndex } from '@/routes/holidays';
 import { index as laborRulesIndex } from '@/routes/labor-rules';
 import { index as positionsIndex } from '@/routes/positions';
 import { index as schedulesIndex } from '@/routes/schedules';
@@ -60,6 +62,11 @@ const mainNavItems: NavItem[] = [
         title: 'Reglas laborales',
         href: laborRulesIndex(),
         icon: Scale,
+    },
+    {
+        title: 'Festivos',
+        href: holidaysIndex(),
+        icon: PartyPopper,
     },
 ];
 
