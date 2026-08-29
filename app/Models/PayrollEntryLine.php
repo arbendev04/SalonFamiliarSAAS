@@ -33,6 +33,7 @@ class PayrollEntryLine extends Model
         'concept_id',
         'contract_id',
         'deduction_plan_id',
+        'social_security_contribution_id',
         'type',
         'quantity',
         'rate',
@@ -87,5 +88,16 @@ class PayrollEntryLine extends Model
     public function deductionPlan(): BelongsTo
     {
         return $this->belongsTo(PayrollDeductionPlan::class, 'deduction_plan_id');
+    }
+
+    /**
+     * Only populated for a deduction line sourced from a
+     * SocialSecurityContribution — same pattern as deductionPlan() above.
+     *
+     * @return BelongsTo<SocialSecurityContribution, $this>
+     */
+    public function socialSecurityContribution(): BelongsTo
+    {
+        return $this->belongsTo(SocialSecurityContribution::class, 'social_security_contribution_id');
     }
 }

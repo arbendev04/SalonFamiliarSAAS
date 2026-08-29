@@ -82,4 +82,12 @@ class PayrollEntry extends Model
     {
         return $this->hasMany(PayrollEntryLine::class);
     }
+
+    /**
+     * @return HasMany<SocialSecurityContribution, $this>
+     */
+    public function socialSecurityContributions(): HasMany
+    {
+        return $this->hasMany(SocialSecurityContribution::class);
+    }
 }

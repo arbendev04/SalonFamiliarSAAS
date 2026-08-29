@@ -166,4 +166,12 @@ class Employee extends Model
     {
         return $this->hasMany(PayrollDeductionPlan::class);
     }
+
+    /**
+     * @return HasMany<SocialSecurityAffiliation, $this>
+     */
+    public function socialSecurityAffiliations(): HasMany
+    {
+        return $this->hasMany(SocialSecurityAffiliation::class);
+    }
 }
