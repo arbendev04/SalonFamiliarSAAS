@@ -15,6 +15,7 @@ import { index as deductionPlansIndex } from '@/routes/employees/deduction-plans
 import { index as leaveRecordsIndex } from '@/routes/employees/leave-records';
 import { index as overtimeRecordsIndex } from '@/routes/employees/overtime-records';
 import { index as shiftsIndex } from '@/routes/employees/shifts';
+import { index as socialSecurityAffiliationsIndex } from '@/routes/employees/social-security-affiliations';
 import { index as timeCalculationIndex } from '@/routes/employees/time-calculation';
 
 type EmployeeDetail = {
@@ -102,6 +103,12 @@ defineOptions({
                     class="text-sm underline underline-offset-4"
                 >
                     Ver planes de deducción
+                </Link>
+                <Link
+                    :href="socialSecurityAffiliationsIndex(employee.id)"
+                    class="text-sm underline underline-offset-4"
+                >
+                    Ver afiliaciones de seguridad social
                 </Link>
             </div>
         </div>

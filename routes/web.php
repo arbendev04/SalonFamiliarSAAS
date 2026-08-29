@@ -19,6 +19,7 @@ use App\Http\Controllers\PositionController;
 use App\Http\Controllers\ShiftAssignmentController;
 use App\Http\Controllers\ShiftBreakController;
 use App\Http\Controllers\ShiftController;
+use App\Http\Controllers\SocialSecurityAffiliationController;
 use App\Http\Controllers\SocialSecurityConceptDefinitionController;
 use App\Http\Controllers\SocialSecurityEntityController;
 use App\Http\Controllers\SocialSecurityRuleVersionController;
@@ -108,6 +109,9 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
     Route::get('social-security/concept-definitions/{concept}/rule-versions', [SocialSecurityRuleVersionController::class, 'index'])->name('social-security.concept-definitions.rule-versions.index');
     Route::post('social-security/concept-definitions/{concept}/rule-versions', [SocialSecurityRuleVersionController::class, 'store'])->name('social-security.rule-versions.store');
+
+    Route::get('employees/{employee}/social-security-affiliations', [SocialSecurityAffiliationController::class, 'index'])->name('employees.social-security-affiliations.index');
+    Route::post('employees/{employee}/social-security-affiliations', [SocialSecurityAffiliationController::class, 'store'])->name('employees.social-security-affiliations.store');
 });
 
 require __DIR__.'/settings.php';
