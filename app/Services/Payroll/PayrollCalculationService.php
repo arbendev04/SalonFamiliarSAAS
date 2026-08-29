@@ -23,6 +23,8 @@ use App\Models\PayrollEntry;
 use App\Models\PayrollPeriod;
 use App\Models\SalaryHistory;
 use App\Models\SocialSecurityAffiliation;
+use App\Models\SocialSecurityConceptDefinition;
+use App\Models\SocialSecurityEntity;
 use App\Services\TimeCalculation\TimeCalculationEngine;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Collection;
@@ -651,6 +653,239 @@ class PayrollCalculationService
                 ];
             })
             ->values();
+    }
+
+    /**
+     * Resolves the active LaborRuleVersion carrying the versioned rate for
+     * one social-security concept, per composed-knitting-dusk.md ADR-020
+     * ("nunca una copia paralela de los mismos porcentajes" — reuse
+     * labor_rules/labor_rule_versions rather than a parallel table) and the
+     * exact `rule_type = 'SOCIAL_SECURITY_' . $conceptCode` convention
+     * SocialSecurityRuleVersionController::resolveLaborRule() already
+     * establishes for writes.
+     *
+     * Deliberately takes `Employee $employee` rather than a bare company id
+     * string, mirroring resolveActiveLaborRuleVersion()'s own signature —
+     * this class has no CurrentCompany collaborator injected anywhere else,
+     * so `$employee->company_id` is how every other method here scopes a
+     * tenant-specific lookup.
+     *
+     * Distinguishes two failure modes that resolveActiveLaborRuleVersion()
+     * collapses into one for STANDARD_WORKWEEK (where a labor_rules row is
+     * assumed to always exist by platform convention):
+     *   - No `labor_rules` row at all for this rule_type: the concept has no
+     *     rate configured yet at all. This is the normal state for a
+     *     freshly-created SocialSecurityConceptDefinition whose rate
+     *     management screen was never visited — returns null as a "skip
+     *     this concept" signal, never an error, consistent with how a
+     *     company with zero SocialSecurityConceptDefinition rows configured
+     *     at all already skips cleanly (design decision #2).
+     *   - A `labor_rules` row exists but LaborRuleVersion::activeFor() finds
+     *     no version covering $date: unlike the above, the company DID
+     *     start configuring this concept's rate, so a rate gap for a date
+     *     that already has an affiliation is a genuine blocking
+     *     configuration failure — throws NoActiveLaborRuleVersionException,
+     *     never silently skipped.
+     *
+     * @throws NoActiveLaborRuleVersionException
+     * @throws AmbiguousLaborRuleVersionException
+     */
+    protected function resolveActiveSocialSecurityRuleVersion(Employee $employee, string $conceptCode, CarbonInterface $date): ?LaborRuleVersion
+    {
+        $ruleType = 'SOCIAL_SECURITY_'.$conceptCode;
+
+        $laborRule = LaborRule::query()
+            ->where('company_id', $employee->company_id)
+            ->where('rule_type', $ruleType)
+            ->first();
+
+        if ($laborRule === null) {
+            return null;
+        }
+
+        $ruleVersion = LaborRuleVersion::activeFor($laborRule->id, $date);
+
+        if ($ruleVersion === null) {
+            throw new NoActiveLaborRuleVersionException($ruleType, $employee->company_id, $date);
+        }
+
+        return $ruleVersion;
+    }
+
+    /**
+     * Validates and extracts the three parameters a social-security rate
+     * version must carry, per composed-knitting-dusk.md design decision #1:
+     * `employee_pct`/`employer_pct` (0..1 floats) and `base_concept_codes`
+     * (an array of payroll_concept_definitions.code values whose summed
+     * line amounts form this concept's contribution base). Mirrors
+     * requireOvertimeParameters()'s exact validate-then-return-tuple shape.
+     *
+     * @return array{0: float, 1: float, 2: array<int, string>} employee_pct, employer_pct, base_concept_codes, in that order.
+     *
+     * @throws MissingLaborRuleParameterException
+     */
+    protected function requireSocialSecurityRateParameters(LaborRuleVersion $version): array
+    {
+        $parameters = $version->parameters;
+
+        if (! array_key_exists('employee_pct', $parameters)) {
+            throw new MissingLaborRuleParameterException($version->id, 'employee_pct');
+        }
+
+        if (! array_key_exists('employer_pct', $parameters)) {
+            throw new MissingLaborRuleParameterException($version->id, 'employer_pct');
+        }
+
+        if (! array_key_exists('base_concept_codes', $parameters)) {
+            throw new MissingLaborRuleParameterException($version->id, 'base_concept_codes');
+        }
+
+        return [
+            (float) $parameters['employee_pct'],
+            (float) $parameters['employer_pct'],
+            $parameters['base_concept_codes'],
+        ];
+    }
+
+    /**
+     * Computes social-security contribution lines for one employee/period,
+     * per composed-knitting-dusk.md's "Cálculo" section. Iterates every
+     * SocialSecurityConceptDefinition effective for the employee's company
+     * (SocialSecurityConceptDefinition::effectiveForCompany() — platform
+     * default OR company override, same HasPlatformOrCompanyDefault
+     * convention as resolveConceptId() already follows for the payroll
+     * catalog). Zero concepts configured is completely normal — a company
+     * that has not set up social security yet still calculates the rest of
+     * payroll fine, per design decision #2 — never an error, so this method
+     * simply returns an empty Collection in that case.
+     *
+     * For each concept: resolveAffiliationSubRanges() partitions the period
+     * into sub-ranges of SocialSecurityAffiliation for that concept's
+     * `entity_type`. An EMPTY result means this employee is not (yet)
+     * affiliated to that entity_type at all — skip this concept entirely,
+     * never an error (same method's own docblock). A NON-EMPTY result has
+     * already been validated internally by resolveAffiliationSubRanges()
+     * (which calls assertAffiliationSubRangesTilePeriodExactly() itself
+     * before returning) to tile the period with no gap/overlap, so no
+     * second assertion call is needed here — any gap/overlap already threw
+     * NoActiveSocialSecurityAffiliationException before this method ever
+     * sees the result.
+     *
+     * For each sub-range: resolves the LaborRuleVersion active for this
+     * concept's rate as of the SUB-RANGE'S OWN start date — never the
+     * period's start — mirroring resolveDailyRate()'s established
+     * per-sub-range date-resolution convention for time-varying parameters.
+     * A null result (no labor_rules row for this concept at all) skips this
+     * sub-range's contribution line rather than blocking, per
+     * resolveActiveSocialSecurityRuleVersion()'s own "skip" contract.
+     * Otherwise validates the version's three required parameters via
+     * requireSocialSecurityRateParameters() and computes:
+     *
+     *   base_amount     = sum($earningLines matching base_concept_codes)
+     *                      * (calendar_days_in_sub_range / calendar_days_in_period)
+     *   employee_amount = round(base_amount * employee_pct, 2)
+     *   employer_amount = round(base_amount * employer_pct, 2)
+     *
+     * — the provisional day-weighted mid-period proration criterion from
+     * design decision #5, documented there as a still-open PENDING DECISION
+     * (never a legally-validated formula), deliberately simpler than
+     * re-cutting against employment_contracts' own sub-ranges. Money is
+     * rounded to 2 decimals via round(), the same convention used
+     * throughout this file (see e.g. fixedDeductionLines()).
+     *
+     * `base_concept_codes` entries are resolved to payroll_entry_lines'
+     * actual `concept_id` via resolveConceptId() (never a bare code
+     * comparison) so they can be matched against $earningLines' already-
+     * resolved concept ids.
+     *
+     * $earningLines is the caller's ALREADY-COMPUTED collection of this
+     * employee/period's earning lines (base salary + authorized overtime),
+     * each entry annotated with its resolved payroll_concept_definitions id
+     * — i.e. `['concept_id' => string, 'amount' => float, ...]` — NOT
+     * proratedBaseSalaryLines()'s raw `contract_id`-keyed shape nor
+     * authorizedOvertimeLines()'s raw `concept_code`-keyed shape. Building
+     * this normalized shape is the caller's responsibility (a later commit
+     * wiring this into calculateForEmployee()), exactly as
+     * calculateForEmployee() already resolves $baseSalaryConceptId/
+     * $overtimeConceptId separately from proratedBaseSalaryLines()'s/
+     * authorizedOvertimeLines()'s own return shapes before persisting.
+     *
+     * Return shape — one entry per (concept × affiliation sub-range)
+     * combination, documented here because a later commit's persistence
+     * wiring depends on it exactly:
+     *   - concept: the SocialSecurityConceptDefinition this line belongs to.
+     *   - entity: the SocialSecurityEntity of the affiliation sub-range this
+     *     line was prorated against (the employee's affiliated entity for
+     *     that sub-range, NOT necessarily the same entity across every
+     *     sub-range of the same concept — a mid-period entity change is
+     *     exactly what produces more than one line for the same concept).
+     *   - period_from/period_to: the sub-range's own clipped bounds.
+     *   - base_amount/employee_amount/employer_amount: this sub-range's
+     *     share of the period's base and the two computed contribution
+     *     amounts.
+     *
+     * @param  Collection<int, array{concept_id: string, amount: float}>  $earningLines
+     * @return Collection<int, array{concept: SocialSecurityConceptDefinition, entity: SocialSecurityEntity, period_from: CarbonInterface, period_to: CarbonInterface, base_amount: float, employee_amount: float, employer_amount: float}>
+     *
+     * @throws NoActiveSocialSecurityAffiliationException
+     * @throws NoActiveLaborRuleVersionException
+     * @throws AmbiguousLaborRuleVersionException
+     * @throws MissingLaborRuleParameterException
+     */
+    protected function socialSecurityContributionLines(Employee $employee, PayrollPeriod $period, Collection $earningLines): Collection
+    {
+        $periodDays = $period->start_date->diffInDays($period->end_date) + 1;
+
+        $concepts = SocialSecurityConceptDefinition::query()->effectiveForCompany($employee->company_id)->get();
+
+        $lines = collect();
+
+        foreach ($concepts as $concept) {
+            $subRanges = $this->resolveAffiliationSubRanges($employee, $concept->entity_type, $period);
+
+            if ($subRanges->isEmpty()) {
+                continue;
+            }
+
+            foreach ($subRanges as $subRange) {
+                /** @var SocialSecurityAffiliation $affiliation */
+                $affiliation = $subRange['affiliation'];
+                /** @var CarbonInterface $from */
+                $from = $subRange['from'];
+                /** @var CarbonInterface $to */
+                $to = $subRange['to'];
+
+                $ruleVersion = $this->resolveActiveSocialSecurityRuleVersion($employee, $concept->code, $from);
+
+                if ($ruleVersion === null) {
+                    continue;
+                }
+
+                [$employeePct, $employerPct, $baseConceptCodes] = $this->requireSocialSecurityRateParameters($ruleVersion);
+
+                $baseConceptIds = collect($baseConceptCodes)
+                    ->map(fn (string $code): string => $this->resolveConceptId($employee->company_id, $code));
+
+                $periodBaseTotal = $earningLines
+                    ->filter(fn (array $line): bool => $baseConceptIds->contains($line['concept_id']))
+                    ->sum('amount');
+
+                $subRangeDays = $from->diffInDays($to) + 1;
+                $baseAmount = $periodBaseTotal * ($subRangeDays / $periodDays);
+
+                $lines->push([
+                    'concept' => $concept,
+                    'entity' => $affiliation->entity,
+                    'period_from' => $from,
+                    'period_to' => $to,
+                    'base_amount' => round($baseAmount, 2),
+                    'employee_amount' => round($baseAmount * $employeePct, 2),
+                    'employer_amount' => round($baseAmount * $employerPct, 2),
+                ]);
+            }
+        }
+
+        return $lines->values();
     }
 
     /**

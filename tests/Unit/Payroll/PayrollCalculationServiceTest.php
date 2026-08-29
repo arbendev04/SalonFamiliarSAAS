@@ -24,6 +24,8 @@ use App\Models\PayrollPeriod;
 use App\Models\SalaryHistory;
 use App\Models\Shift;
 use App\Models\SocialSecurityAffiliation;
+use App\Models\SocialSecurityConceptDefinition;
+use App\Models\SocialSecurityEntity;
 use App\Services\Payroll\PayrollCalculationService;
 use App\Services\Tenancy\CurrentCompany;
 use Carbon\CarbonInterface;
@@ -119,6 +121,28 @@ class PayrollCalculationServiceTest extends TestCase
             {
                 return $this->fixedDeductionLines($employee);
             }
+
+            public function callResolveActiveSocialSecurityRuleVersion(Employee $employee, string $conceptCode, CarbonInterface $date): ?LaborRuleVersion
+            {
+                return $this->resolveActiveSocialSecurityRuleVersion($employee, $conceptCode, $date);
+            }
+
+            /**
+             * @return array{0: float, 1: float, 2: array<int, string>}
+             */
+            public function callRequireSocialSecurityRateParameters(LaborRuleVersion $version): array
+            {
+                return $this->requireSocialSecurityRateParameters($version);
+            }
+
+            /**
+             * @param  Collection<int, array{concept_id: string, amount: float}>  $earningLines
+             * @return Collection<int, array{concept: SocialSecurityConceptDefinition, entity: SocialSecurityEntity, period_from: CarbonInterface, period_to: CarbonInterface, base_amount: float, employee_amount: float, employer_amount: float}>
+             */
+            public function callSocialSecurityContributionLines(Employee $employee, PayrollPeriod $period, Collection $earningLines): Collection
+            {
+                return $this->socialSecurityContributionLines($employee, $period, $earningLines);
+            }
         };
     }
 
@@ -151,6 +175,49 @@ class PayrollCalculationServiceTest extends TestCase
             'start_date' => $start,
             'end_date' => $end,
         ]);
+    }
+
+    private function socialSecurityConcept(string $entityType): SocialSecurityConceptDefinition
+    {
+        return SocialSecurityConceptDefinition::factory()->create([
+            'company_id' => $this->company->id,
+            'entity_type' => $entityType,
+        ]);
+    }
+
+    /**
+     * Same reuse-or-create shape as laborRuleVersion(), but scoped to a
+     * given social-security concept's own `rule_type =
+     * 'SOCIAL_SECURITY_' . $concept->code`, per
+     * SocialSecurityRuleVersionController::resolveLaborRule()'s convention.
+     */
+    private function socialSecurityRuleVersion(SocialSecurityConceptDefinition $concept, array $parameters, ?string $effectiveFrom = null): LaborRuleVersion
+    {
+        $laborRule = $this->socialSecurityLaborRule($concept);
+
+        return LaborRuleVersion::factory()->create([
+            'company_id' => $this->company->id,
+            'labor_rule_id' => $laborRule->id,
+            'effective_from' => $effectiveFrom ?? '2025-01-01',
+            'effective_to' => null,
+            'parameters' => $parameters,
+        ]);
+    }
+
+    /**
+     * Creates the underlying LaborRule for a concept's rate WITHOUT any
+     * LaborRuleVersion — the "rate rule started but never a version was
+     * added" scenario, distinct from "no LaborRule row at all".
+     */
+    private function socialSecurityLaborRule(SocialSecurityConceptDefinition $concept): LaborRule
+    {
+        return LaborRule::query()
+            ->where('company_id', $this->company->id)
+            ->where('rule_type', 'SOCIAL_SECURITY_'.$concept->code)
+            ->first() ?? LaborRule::factory()->create([
+                'company_id' => $this->company->id,
+                'rule_type' => 'SOCIAL_SECURITY_'.$concept->code,
+            ]);
     }
 
     public function test_a_single_contract_spanning_the_whole_period_produces_one_sub_range_bounded_by_the_period()
@@ -1171,5 +1238,199 @@ class PayrollCalculationServiceTest extends TestCase
         }
 
         $this->assertSame(0, PayrollEntry::query()->where('payroll_period_id', $period->id)->count());
+    }
+
+    public function test_zero_social_security_concepts_configured_produces_an_empty_collection_without_throwing()
+    {
+        $this->seed(PayrollConceptCatalogSeeder::class);
+
+        $period = $this->period('2025-01-01', '2025-01-15');
+        // Deliberately zero SocialSecurityConceptDefinition rows — a company
+        // that has not configured social security at all yet.
+        $earningLines = collect([
+            ['concept_id' => $this->baseSalaryConceptId(), 'amount' => 1000000.0],
+        ]);
+
+        $lines = $this->service->callSocialSecurityContributionLines($this->employee, $period, $earningLines);
+
+        $this->assertCount(0, $lines);
+    }
+
+    public function test_one_concept_with_one_affiliation_spanning_the_whole_period_produces_a_correctly_computed_line()
+    {
+        $this->seed(PayrollConceptCatalogSeeder::class);
+
+        $period = $this->period('2025-01-01', '2025-01-15');
+        $concept = $this->socialSecurityConcept('CATEGORY_A');
+        $affiliation = $this->affiliation('CATEGORY_A', '2024-06-01', null);
+        $this->socialSecurityRuleVersion($concept, [
+            'employee_pct' => 0.10,
+            'employer_pct' => 0.20,
+            'base_concept_codes' => ['BASE_SALARY'],
+        ]);
+
+        $earningLines = collect([
+            ['concept_id' => $this->baseSalaryConceptId(), 'amount' => 1000000.0],
+        ]);
+
+        $lines = $this->service->callSocialSecurityContributionLines($this->employee, $period, $earningLines);
+
+        $this->assertCount(1, $lines);
+
+        $line = $lines->first();
+        $this->assertSame($concept->id, $line['concept']->id);
+        $this->assertSame($affiliation->entity_id, $line['entity']->id);
+        $this->assertTrue($line['period_from']->equalTo(Carbon::parse('2025-01-01')));
+        $this->assertTrue($line['period_to']->equalTo(Carbon::parse('2025-01-15')));
+        $this->assertEqualsWithDelta(1000000.0, $line['base_amount'], 0.01);
+        $this->assertEqualsWithDelta(100000.0, $line['employee_amount'], 0.01);
+        $this->assertEqualsWithDelta(200000.0, $line['employer_amount'], 0.01);
+    }
+
+    public function test_two_affiliation_sub_ranges_mid_period_produce_two_lines_correctly_prorated_and_attributed_to_each_entity()
+    {
+        $this->seed(PayrollConceptCatalogSeeder::class);
+
+        $period = $this->period('2025-01-01', '2025-01-15');
+        $concept = $this->socialSecurityConcept('CATEGORY_A');
+        // 7 days (Jan 1-7) then 8 days (Jan 8-15) — mid-period entity change.
+        $before = $this->affiliation('CATEGORY_A', '2024-06-01', '2025-01-07');
+        $after = $this->affiliation('CATEGORY_A', '2025-01-08', null);
+        $this->socialSecurityRuleVersion($concept, [
+            'employee_pct' => 0.10,
+            'employer_pct' => 0.20,
+            'base_concept_codes' => ['BASE_SALARY'],
+        ]);
+
+        $earningLines = collect([
+            ['concept_id' => $this->baseSalaryConceptId(), 'amount' => 1000000.0],
+        ]);
+
+        $lines = $this->service->callSocialSecurityContributionLines($this->employee, $period, $earningLines);
+
+        $this->assertCount(2, $lines);
+
+        $firstLine = $lines->first();
+        $this->assertSame($before->entity_id, $firstLine['entity']->id);
+        // 1,000,000 * 7/15 = 466,666.67.
+        $this->assertEqualsWithDelta(466666.67, $firstLine['base_amount'], 0.01);
+        $this->assertEqualsWithDelta(46666.67, $firstLine['employee_amount'], 0.01);
+        $this->assertEqualsWithDelta(93333.33, $firstLine['employer_amount'], 0.01);
+
+        $secondLine = $lines->last();
+        $this->assertSame($after->entity_id, $secondLine['entity']->id);
+        // 1,000,000 * 8/15 = 533,333.33.
+        $this->assertEqualsWithDelta(533333.33, $secondLine['base_amount'], 0.01);
+        $this->assertEqualsWithDelta(53333.33, $secondLine['employee_amount'], 0.01);
+        $this->assertEqualsWithDelta(106666.67, $secondLine['employer_amount'], 0.01);
+
+        // The two sub-ranges' base_amount reconstructs the full period base.
+        $this->assertEqualsWithDelta(1000000.0, $lines->sum('base_amount'), 0.01);
+    }
+
+    public function test_a_concept_with_no_affiliation_at_all_is_skipped_while_other_properly_affiliated_concepts_still_produce_lines()
+    {
+        $this->seed(PayrollConceptCatalogSeeder::class);
+
+        $period = $this->period('2025-01-01', '2025-01-15');
+
+        // Configured and affiliated — should produce a line.
+        $affiliatedConcept = $this->socialSecurityConcept('CATEGORY_A');
+        $this->affiliation('CATEGORY_A', '2024-06-01', null);
+        $this->socialSecurityRuleVersion($affiliatedConcept, [
+            'employee_pct' => 0.10,
+            'employer_pct' => 0.20,
+            'base_concept_codes' => ['BASE_SALARY'],
+        ]);
+
+        // Configured but never affiliated — no SocialSecurityAffiliation of
+        // 'CATEGORY_B' exists at all for this employee.
+        $unaffiliatedConcept = $this->socialSecurityConcept('CATEGORY_B');
+        $this->socialSecurityRuleVersion($unaffiliatedConcept, [
+            'employee_pct' => 0.10,
+            'employer_pct' => 0.20,
+            'base_concept_codes' => ['BASE_SALARY'],
+        ]);
+
+        $earningLines = collect([
+            ['concept_id' => $this->baseSalaryConceptId(), 'amount' => 1000000.0],
+        ]);
+
+        $lines = $this->service->callSocialSecurityContributionLines($this->employee, $period, $earningLines);
+
+        $this->assertCount(1, $lines);
+        $this->assertSame($affiliatedConcept->id, $lines->first()['concept']->id);
+    }
+
+    public function test_a_concept_with_an_affiliation_but_no_labor_rule_version_covering_the_date_throws()
+    {
+        $this->seed(PayrollConceptCatalogSeeder::class);
+
+        $period = $this->period('2025-01-01', '2025-01-15');
+        $concept = $this->socialSecurityConcept('CATEGORY_A');
+        $this->affiliation('CATEGORY_A', '2024-06-01', null);
+        // The LaborRule row exists (rate configuration was started) but no
+        // LaborRuleVersion was ever added — a genuine blocking configuration
+        // gap, distinct from the "no LaborRule row at all" skip case.
+        $this->socialSecurityLaborRule($concept);
+
+        $earningLines = collect([
+            ['concept_id' => $this->baseSalaryConceptId(), 'amount' => 1000000.0],
+        ]);
+
+        $this->expectException(NoActiveLaborRuleVersionException::class);
+
+        $this->service->callSocialSecurityContributionLines($this->employee, $period, $earningLines);
+    }
+
+    public function test_a_rule_version_missing_base_concept_codes_throws_missing_labor_rule_parameter_exception()
+    {
+        $this->seed(PayrollConceptCatalogSeeder::class);
+
+        $period = $this->period('2025-01-01', '2025-01-15');
+        $concept = $this->socialSecurityConcept('CATEGORY_A');
+        $this->affiliation('CATEGORY_A', '2024-06-01', null);
+        $this->socialSecurityRuleVersion($concept, [
+            'employee_pct' => 0.10,
+            'employer_pct' => 0.20,
+            // base_concept_codes deliberately missing.
+        ]);
+
+        $earningLines = collect([
+            ['concept_id' => $this->baseSalaryConceptId(), 'amount' => 1000000.0],
+        ]);
+
+        $this->expectException(MissingLaborRuleParameterException::class);
+
+        $this->service->callSocialSecurityContributionLines($this->employee, $period, $earningLines);
+    }
+
+    public function test_a_base_concept_code_with_zero_matching_earning_lines_degrades_to_a_zero_amount_line_without_throwing()
+    {
+        $this->seed(PayrollConceptCatalogSeeder::class);
+
+        $period = $this->period('2025-01-01', '2025-01-15');
+        $concept = $this->socialSecurityConcept('CATEGORY_A');
+        $this->affiliation('CATEGORY_A', '2024-06-01', null);
+        // Base concept is OVERTIME, but the employee earned zero overtime
+        // this period — $earningLines below carries no OVERTIME entry.
+        $this->socialSecurityRuleVersion($concept, [
+            'employee_pct' => 0.10,
+            'employer_pct' => 0.20,
+            'base_concept_codes' => ['OVERTIME'],
+        ]);
+
+        $earningLines = collect([
+            ['concept_id' => $this->baseSalaryConceptId(), 'amount' => 1000000.0],
+        ]);
+
+        $lines = $this->service->callSocialSecurityContributionLines($this->employee, $period, $earningLines);
+
+        $this->assertCount(1, $lines);
+
+        $line = $lines->first();
+        $this->assertEqualsWithDelta(0.0, $line['base_amount'], 0.0001);
+        $this->assertEqualsWithDelta(0.0, $line['employee_amount'], 0.0001);
+        $this->assertEqualsWithDelta(0.0, $line['employer_amount'], 0.0001);
     }
 }
