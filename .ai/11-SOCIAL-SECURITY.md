@@ -52,6 +52,7 @@ El esquema completo (columnas, tipos, aislamiento, mutabilidad) de estas cuatro 
 - **Empleado con múltiples afiliaciones históricas a lo largo del tiempo** (ej. cambió de entidad hace dos años): el cálculo de un periodo siempre resuelve la afiliación vigente **a la fecha del periodo que se está liquidando**, no la afiliación actual del empleado al momento de ejecutar el cálculo. Las afiliaciones cerradas permanecen consultables para efectos de reportes históricos, nunca se eliminan.
 - **Cambio de entidad de afiliación a mitad de un periodo de nómina**: igual que el caso de contrato partido a mitad de periodo en [10-PAYROLL.md](./10-PAYROLL.md), el esquema debe soportar más de una fila de `social_security_contributions` para el mismo empleado y periodo, una por cada entidad vigente en su respectivo sub-rango.
   - **PENDING DECISION**: si el prorrateo del aporte en este caso sigue el mismo criterio (aún no definido) que el prorrateo salarial de contrato partido en [10-PAYROLL.md](./10-PAYROLL.md), o si depende de una regla propia de la entidad de seguridad social. Ninguna de las dos está resuelta por el brief.
+    - **Criterio provisional implementado** (Fase 10, `PayrollCalculationService::socialSecurityContributionLines()`): `base_amount` de cada sub-rango = `base_total_del_periodo × (días_calendario_del_sub-rango / días_calendario_del_periodo)` — el mismo criterio de días calendario ya usado para el prorrateo salarial de contrato partido en [10-PAYROLL.md](./10-PAYROLL.md), aplicado por simplicidad de implementación, no porque exista una razón legal para asumir que ambos prorrateos deban coincidir. Sigue explícitamente **sin resolver**: esto es una decisión de ingeniería para poder calcular algo hoy, no una validación profesional de que la seguridad social colombiana efectivamente prorratea así.
 
 ## Errores
 
@@ -70,9 +71,9 @@ El esquema completo (columnas, tipos, aislamiento, mutabilidad) de estas cuatro 
 
 ## Criterios de aceptación
 
-- [ ] Ningún porcentaje ni tasa de aporte de seguridad social existe hardcodeado en el motor de cálculo; todos se resuelven contra reglas vigentes versionadas.
-- [ ] Toda fila de `social_security_contributions` tiene una `payroll_entry_id` no nula que la enlaza a la liquidación que la generó.
-- [ ] Un empleado con múltiples afiliaciones históricas resuelve siempre la afiliación vigente a la fecha del periodo calculado, no la afiliación actual.
-- [ ] Un cambio de entidad a mitad de periodo produce múltiples filas de `social_security_contributions` correctamente atribuidas a cada sub-rango (el criterio exacto de prorrateo queda `PENDING DECISION`).
-- [ ] Un cálculo sin afiliación activa vigente para la fecha se rechaza explícitamente, nunca se omite en silencio.
-- [ ] El acceso a datos de afiliación y aporte respeta `social_security.manage` y queda auditado en `audit_logs`.
+- [x] Ningún porcentaje ni tasa de aporte de seguridad social existe hardcodeado en el motor de cálculo; todos se resuelven contra reglas vigentes versionadas (`labor_rules`/`labor_rule_versions` reutilizadas, `rule_type = 'SOCIAL_SECURITY_' . code`).
+- [x] Toda fila de `social_security_contributions` tiene una `payroll_entry_id` no nula que la enlaza a la liquidación que la generó.
+- [x] Un empleado con múltiples afiliaciones históricas resuelve siempre la afiliación vigente a la fecha del periodo calculado, no la afiliación actual (`SocialSecurityAffiliation::activeFor()`).
+- [x] Un cambio de entidad a mitad de periodo produce múltiples filas de `social_security_contributions` correctamente atribuidas a cada sub-rango (el criterio exacto de prorrateo queda `PENDING DECISION`, ver Casos especiales — se implementó un criterio provisional de días calendario).
+- [x] Un cálculo sin afiliación activa vigente para la fecha se rechaza explícitamente, nunca se omite en silencio (`NoActiveSocialSecurityAffiliationException`, bloquea solo al empleado afectado).
+- [x] El acceso a datos de afiliación y aporte respeta `social_security.manage` y queda auditado en `audit_logs`.
