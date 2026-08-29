@@ -370,25 +370,27 @@ class BiweeklyPayrollCalculationTest extends TestCase
             ->where('payroll_period_id', $closedPeriod->id)
             ->where('employee_id', $employee->id)
             ->firstOrFail();
-        $grossBeforeAttempt = (float) $entryBeforeAttempt->gross_total;
+        $entryAttributesBeforeAttempt = $entryBeforeAttempt->fresh()->toArray();
+        $linesBeforeAttempt = $entryBeforeAttempt->lines()->orderBy('id')->get()->toArray();
 
-        // PayrollCalculationService itself has no status guard of its own
-        // (per its docblock: it is a pure calculation engine, unaware of
-        // period-level state) — the closed-period guard lives exclusively
-        // in PayrollPeriodService::calculate(). Calling the calculation
-        // service directly against a closed period therefore does NOT
-        // throw; it freely recalculates the entry in place, same as it
-        // would for an open one. This is confirmed here, not assumed, so
-        // that the real protection boundary (PayrollPeriodService, tested
-        // above) is not mistaken for a guard that also lives one layer
-        // lower.
-        $recalculated = app(PayrollCalculationService::class)->calculateForEmployee($closedPeriod->fresh(), $employee);
+        // PayrollCalculationService::calculateForEmployee() now guards
+        // period status itself, in addition to PayrollPeriodService's own
+        // guard — defense in depth for the phase's core acceptance
+        // criterion that a closed period is immutable at the application
+        // level no matter which code path reaches the write (a future
+        // scheduled job or console command calling this service directly,
+        // bypassing PayrollPeriodService entirely, must be blocked just the
+        // same). Calling it directly against a genuinely closed period
+        // therefore throws immediately and leaves the existing entry/lines
+        // completely untouched, confirmed here rather than assumed.
+        try {
+            app(PayrollCalculationService::class)->calculateForEmployee($closedPeriod->fresh(), $employee);
+            $this->fail('Expected InvalidPayrollPeriodStatusException to be thrown.');
+        } catch (InvalidPayrollPeriodStatusException $exception) {
+            // expected
+        }
 
-        $this->assertSame('calculated', $recalculated->status);
-        $this->assertEqualsWithDelta($grossBeforeAttempt, (float) $recalculated->gross_total, 0.01);
-
-        // The actual application-level protection against recalculating a
-        // closed period is PayrollPeriodService::calculate()'s guard,
-        // already proven in the main test above.
+        $this->assertSame($entryAttributesBeforeAttempt, $entryBeforeAttempt->fresh()->toArray());
+        $this->assertSame($linesBeforeAttempt, $entryBeforeAttempt->lines()->orderBy('id')->get()->toArray());
     }
 }

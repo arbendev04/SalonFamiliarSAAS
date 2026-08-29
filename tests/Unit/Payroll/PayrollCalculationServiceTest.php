@@ -3,6 +3,7 @@
 namespace Tests\Unit\Payroll;
 
 use App\Exceptions\AmbiguousContractException;
+use App\Exceptions\InvalidPayrollPeriodStatusException;
 use App\Exceptions\MissingLaborRuleParameterException;
 use App\Exceptions\NoActiveLaborRuleVersionException;
 use App\Exceptions\NoAttendanceOrNoveltyDataException;
@@ -951,5 +952,109 @@ class PayrollCalculationServiceTest extends TestCase
         $this->assertCount(2, $lines);
         $this->assertTrue($lines->contains('concept_id', $this->baseSalaryConceptId()));
         $this->assertTrue($lines->contains('concept_id', $this->overtimeConceptId()));
+    }
+
+    public function test_calculate_for_employee_against_a_closed_period_throws_immediately_without_modifying_the_existing_entry_or_its_lines()
+    {
+        $this->seed(PayrollConceptCatalogSeeder::class);
+
+        $period = $this->period('2026-04-01', '2026-04-30');
+        $this->contract('2025-01-01', null, 3100000);
+        AttendanceRecord::factory()->create([
+            'company_id' => $this->company->id,
+            'employee_id' => $this->employee->id,
+            'date' => '2026-04-05',
+        ]);
+
+        $entry = $this->service->calculateForEmployee($period, $this->employee);
+        $entryBefore = $entry->fresh()->toArray();
+        $linesBefore = $entry->lines()->orderBy('id')->get()->toArray();
+
+        $period->update(['status' => 'closed']);
+
+        try {
+            $this->service->calculateForEmployee($period->fresh(), $this->employee);
+            $this->fail('Expected InvalidPayrollPeriodStatusException to be thrown.');
+        } catch (InvalidPayrollPeriodStatusException $exception) {
+            $this->assertStringContainsString($period->id, $exception->getMessage());
+        }
+
+        // Byte-for-byte unchanged: the guard fired before the destructive
+        // updateOrCreate()/lines()->delete() step ever ran.
+        $this->assertSame($entryBefore, $entry->fresh()->toArray());
+        $this->assertSame($linesBefore, $entry->lines()->orderBy('id')->get()->toArray());
+    }
+
+    public function test_calculate_for_employee_still_works_normally_for_every_non_closed_period_status()
+    {
+        $this->seed(PayrollConceptCatalogSeeder::class);
+
+        foreach (['open', 'calculated', 'approved', 'reopened'] as $status) {
+            $employee = Employee::factory()->create(['company_id' => $this->company->id]);
+            $period = $this->period('2026-05-01', '2026-05-31');
+            $period->update(['status' => $status]);
+
+            EmploymentContract::factory()->create([
+                'company_id' => $this->company->id,
+                'employee_id' => $employee->id,
+                'start_date' => '2025-01-01',
+                'end_date' => null,
+                'base_salary' => 3000000,
+            ]);
+            AttendanceRecord::factory()->create([
+                'company_id' => $this->company->id,
+                'employee_id' => $employee->id,
+                'date' => '2026-05-05',
+            ]);
+
+            $entry = $this->service->calculateForEmployee($period->fresh(), $employee);
+
+            $this->assertSame('calculated', $entry->status, "Failed for period status '{$status}'.");
+        }
+    }
+
+    public function test_calculate_for_period_against_a_closed_period_propagates_immediately_without_persisting_any_entries()
+    {
+        $this->seed(PayrollConceptCatalogSeeder::class);
+
+        $period = $this->period('2026-04-01', '2026-04-30');
+        $period->update(['status' => 'closed']);
+
+        $this->contract('2025-01-01', null, 3100000);
+        AttendanceRecord::factory()->create([
+            'company_id' => $this->company->id,
+            'employee_id' => $this->employee->id,
+            'date' => '2026-04-05',
+        ]);
+
+        $secondEmployee = Employee::factory()->create(['company_id' => $this->company->id]);
+        EmploymentContract::factory()->create([
+            'company_id' => $this->company->id,
+            'employee_id' => $secondEmployee->id,
+            'start_date' => '2025-01-01',
+            'end_date' => null,
+            'base_salary' => 3000000,
+        ]);
+        AttendanceRecord::factory()->create([
+            'company_id' => $this->company->id,
+            'employee_id' => $secondEmployee->id,
+            'date' => '2026-04-05',
+        ]);
+
+        // Confirms this propagates out of calculateForPeriod() on the very
+        // first employee it hits, rather than being swallowed into the
+        // per-employee 'blocked' catch: a closed period is a single global
+        // precondition violation affecting the whole batch identically, not
+        // per-employee bad data, so NEITHER employee gets a persisted
+        // PayrollEntry — not even a 'blocked' one — which is what would
+        // exist if this were caught-and-collected instead.
+        try {
+            $this->service->calculateForPeriod($period->fresh());
+            $this->fail('Expected InvalidPayrollPeriodStatusException to be thrown.');
+        } catch (InvalidPayrollPeriodStatusException $exception) {
+            // expected
+        }
+
+        $this->assertSame(0, PayrollEntry::query()->where('payroll_period_id', $period->id)->count());
     }
 }

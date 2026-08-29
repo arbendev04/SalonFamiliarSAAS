@@ -5,6 +5,7 @@ namespace App\Services\Payroll;
 use App\Exceptions\AmbiguousContractException;
 use App\Exceptions\AmbiguousLaborRuleVersionException;
 use App\Exceptions\AmbiguousSalaryHistoryException;
+use App\Exceptions\InvalidPayrollPeriodStatusException;
 use App\Exceptions\MissingLaborRuleParameterException;
 use App\Exceptions\NoActiveLaborRuleVersionException;
 use App\Exceptions\NoAttendanceOrNoveltyDataException;
@@ -580,6 +581,20 @@ class PayrollCalculationService
      * DB::transaction(), opened only in the catch block, strictly AFTER the
      * first transaction's implicit rollback has already completed.
      *
+     * Defense in depth for the phase's core acceptance criterion — "el
+     * cierre de un periodo es efectivamente inmutable a nivel de
+     * aplicación" — this class is otherwise a pure calculation engine with
+     * NO knowledge of period-level state, but that immutability guarantee
+     * cannot depend solely on PayrollPeriodService::calculate()'s own
+     * status guard: anything that ever calls this method directly (a
+     * scheduled job, a console command, a bug in some other caller) would
+     * silently bypass that guard entirely and freely delete/recreate a
+     * closed period's entry lines. This check runs BEFORE every other
+     * guarded computational step — including
+     * assertHasAttendanceOrNoveltyCoverage() — so a closed period is
+     * rejected immediately and cheaply, never after doing wasted work.
+     *
+     * @throws InvalidPayrollPeriodStatusException
      * @throws AmbiguousContractException
      * @throws AmbiguousSalaryHistoryException
      * @throws NoActiveLaborRuleVersionException
@@ -589,6 +604,10 @@ class PayrollCalculationService
      */
     public function calculateForEmployee(PayrollPeriod $period, Employee $employee): PayrollEntry
     {
+        if ($period->status === 'closed') {
+            throw new InvalidPayrollPeriodStatusException($period->id, $period->status, 'open|calculated|approved|reopened');
+        }
+
         try {
             $this->assertHasAttendanceOrNoveltyCoverage($employee, $period);
 
@@ -748,7 +767,25 @@ class PayrollCalculationService
      * persistBlockedEntry() before rethrowing, so the blocked row is simply
      * looked up here rather than recreated.
      *
+     * InvalidPayrollPeriodStatusException is deliberately NOT added to this
+     * per-employee catch list. It is not a per-employee data problem the
+     * way the other six documented exceptions are — the period-level
+     * status check inside calculateForEmployee() does not vary by
+     * employee, so if it fires for one employee it would fire identically
+     * for every other employee in the batch. Catching it here would mean
+     * silently marking the ENTIRE company's employee roster 'blocked' with
+     * the same repeated message, which would misrepresent what is actually
+     * a single caller-level mistake (calling calculateForPeriod() on a
+     * closed period at all) as a batch of unrelated per-employee failures.
+     * Instead it propagates immediately out of this method on the very
+     * first employee it hits, aborting the whole batch — the same
+     * "caller's precondition was wrong from the start" signal
+     * PayrollPeriodService::calculate()'s own upfront guard already gives
+     * for this exact case.
+     *
      * @return Collection<int, array{employee_id: string, status: 'ok'|'blocked', entry: ?PayrollEntry, error: ?string}>
+     *
+     * @throws InvalidPayrollPeriodStatusException
      */
     public function calculateForPeriod(PayrollPeriod $period): Collection
     {
