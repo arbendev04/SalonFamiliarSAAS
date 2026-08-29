@@ -2,7 +2,9 @@
 
 namespace App\Models;
 
+use App\Exceptions\NoActiveSocialSecurityAffiliationException;
 use App\Models\Concerns\BelongsToCompany;
+use Carbon\CarbonInterface;
 use Database\Factories\SocialSecurityAffiliationFactory;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -14,9 +16,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * SocialSecurityEntity for a given `entity_type` (e.g. health, pension).
  * Never overwritten once created — closing an affiliation means setting
  * end_date, never deleting the row (HISTORIAL semantics, same as
- * EmploymentContract), which is why this model has no soft-delete. The
- * effective-dated lookup analogous to
- * EmploymentContract::activeForEmployeeAt() is a later commit, not this one.
+ * EmploymentContract), which is why this model has no soft-delete.
  */
 class SocialSecurityAffiliation extends Model
 {
@@ -69,5 +69,36 @@ class SocialSecurityAffiliation extends Model
     public function entity(): BelongsTo
     {
         return $this->belongsTo(SocialSecurityEntity::class);
+    }
+
+    /**
+     * Effective-dated lookup: the affiliation of the given `entity_type` in
+     * force for the given employee on the given date. Returns null when
+     * none applies — a legitimate outcome (an entity_type that was never
+     * affiliated for this employee), mirroring
+     * EmploymentContract::activeForEmployeeAt(). Throws when more than one
+     * candidate overlaps — a data integrity bug given the overlap guard
+     * (Postgres EXCLUDE constraint plus
+     * StoreSocialSecurityAffiliationRequest::withValidator()), never
+     * something to guess around.
+     *
+     * @throws NoActiveSocialSecurityAffiliationException
+     */
+    public static function activeFor(string $employeeId, string $entityType, CarbonInterface $date): ?self
+    {
+        $candidates = static::query()
+            ->where('employee_id', $employeeId)
+            ->where('entity_type', $entityType)
+            ->where('start_date', '<=', $date->toDateString())
+            ->where(function ($query) use ($date) {
+                $query->whereNull('end_date')->orWhere('end_date', '>=', $date->toDateString());
+            })
+            ->get();
+
+        if ($candidates->count() > 1) {
+            throw new NoActiveSocialSecurityAffiliationException($employeeId, $entityType, $date);
+        }
+
+        return $candidates->first();
     }
 }
