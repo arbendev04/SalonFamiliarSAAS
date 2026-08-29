@@ -2,7 +2,9 @@
 
 namespace App\Models;
 
+use App\Exceptions\AmbiguousSalaryHistoryException;
 use App\Models\Concerns\BelongsToCompany;
+use Carbon\CarbonInterface;
 use Database\Factories\SalaryHistoryFactory;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -50,5 +52,34 @@ class SalaryHistory extends Model
     public function contract(): BelongsTo
     {
         return $this->belongsTo(EmploymentContract::class, 'contract_id');
+    }
+
+    /**
+     * Effective-dated lookup: the salary revision in force for the given
+     * contract on the given date. Returns null when none applies — this is
+     * a valid, expected outcome (not every date needs a revision): the
+     * caller must then fall back to the contract's own base_salary. This
+     * method never resolves that fallback itself, it only reports whether a
+     * specific revision is in force. Throws when more than one revision is
+     * in force simultaneously — that is a data integrity bug, never
+     * something to guess around (see .ai/04-DOMAIN-MODEL.md).
+     *
+     * @throws AmbiguousSalaryHistoryException
+     */
+    public static function activeAt(string $contractId, CarbonInterface $date): ?self
+    {
+        $candidates = static::query()
+            ->where('contract_id', $contractId)
+            ->where('effective_from', '<=', $date->toDateString())
+            ->where(function ($query) use ($date) {
+                $query->whereNull('effective_to')->orWhere('effective_to', '>=', $date->toDateString());
+            })
+            ->get();
+
+        if ($candidates->count() > 1) {
+            throw new AmbiguousSalaryHistoryException($contractId, $date);
+        }
+
+        return $candidates->first();
     }
 }
