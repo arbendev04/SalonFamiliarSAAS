@@ -8,6 +8,7 @@ use App\Exceptions\AmbiguousSalaryHistoryException;
 use App\Exceptions\InvalidPayrollPeriodStatusException;
 use App\Exceptions\MissingLaborRuleParameterException;
 use App\Exceptions\NoActiveLaborRuleVersionException;
+use App\Exceptions\NoActiveSocialSecurityAffiliationException;
 use App\Exceptions\NoAttendanceOrNoveltyDataException;
 use App\Models\AttendanceRecord;
 use App\Models\Employee;
@@ -21,6 +22,7 @@ use App\Models\PayrollDeductionPlan;
 use App\Models\PayrollEntry;
 use App\Models\PayrollPeriod;
 use App\Models\SalaryHistory;
+use App\Models\SocialSecurityAffiliation;
 use App\Services\TimeCalculation\TimeCalculationEngine;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Collection;
@@ -189,6 +191,127 @@ class PayrollCalculationService
 
         if (! $subRanges->last()['to']->equalTo($period->end_date)) {
             throw new AmbiguousContractException($employee->id, $period->start_date);
+        }
+    }
+
+    /**
+     * Splits [$period->start_date, $period->end_date] into one sub-range per
+     * social_security_affiliations row of the given $entityType overlapping
+     * it, mirroring resolveContractSubRanges()'s exact overlap-query/clip
+     * technique (composed-knitting-dusk.md, "Cálculo").
+     *
+     * Deliberately diverges from resolveContractSubRanges() in how it
+     * treats a total absence of coverage: "zero employment_contracts
+     * covering the period" is always AmbiguousContractException, because
+     * every employee must have exactly one contract at all times. "Zero
+     * social_security_affiliations of this $entityType", by contrast, is a
+     * perfectly normal outcome — a company that has not yet configured this
+     * entity_type or affiliated this employee to it can still liquidate the
+     * rest of payroll fine, just without this concept's line (a later
+     * commit's socialSecurityContributionLines() treats an empty result
+     * from this method as "skip this concept for this employee", never as
+     * a block). So this method returns an EMPTY collection, without ever
+     * calling assertAffiliationSubRangesTilePeriodExactly(), when no
+     * affiliation of $entityType overlaps the period at all.
+     *
+     * Once at least one affiliation of this $entityType DOES exist
+     * somewhere in the period, though, every day of the period must be
+     * covered by exactly one — a gap (including one at either edge of the
+     * period) or an overlap between sub-ranges is exactly as much a
+     * data-integrity failure as the contract case, so
+     * assertAffiliationSubRangesTilePeriodExactly() is called to enforce
+     * that, and can throw.
+     *
+     * @return Collection<int, array{affiliation: SocialSecurityAffiliation, from: CarbonInterface, to: CarbonInterface}>
+     *
+     * @throws NoActiveSocialSecurityAffiliationException
+     */
+    protected function resolveAffiliationSubRanges(Employee $employee, string $entityType, PayrollPeriod $period): Collection
+    {
+        $affiliations = SocialSecurityAffiliation::query()
+            ->where('employee_id', $employee->id)
+            ->where('entity_type', $entityType)
+            ->where('start_date', '<=', $period->end_date->toDateString())
+            ->where(function ($query) use ($period) {
+                $query->whereNull('end_date')->orWhere('end_date', '>=', $period->start_date->toDateString());
+            })
+            ->orderBy('start_date')
+            ->get();
+
+        if ($affiliations->isEmpty()) {
+            return collect();
+        }
+
+        $subRanges = $affiliations->map(function (SocialSecurityAffiliation $affiliation) use ($period): array {
+            $from = $affiliation->start_date->greaterThan($period->start_date)
+                ? $affiliation->start_date->copy()
+                : $period->start_date->copy();
+
+            $affiliationEnd = $affiliation->end_date ?? $period->end_date;
+            $to = $affiliationEnd->lessThan($period->end_date)
+                ? $affiliationEnd->copy()
+                : $period->end_date->copy();
+
+            return ['affiliation' => $affiliation, 'from' => $from, 'to' => $to];
+        })->values();
+
+        $this->assertAffiliationSubRangesTilePeriodExactly($subRanges, $period);
+
+        return $subRanges;
+    }
+
+    /**
+     * Walks the sub-ranges in order and confirms they tile the period with
+     * no gap and no overlap — same walk as assertSubRangesTilePeriodExactly()
+     * — but ONLY ever called (and only meaningful) when $subRanges is
+     * non-empty: resolveAffiliationSubRanges() already short-circuits the
+     * "zero affiliations of this entity_type at all" case into an empty
+     * collection before this method runs, since that case is not an error
+     * (see that method's docblock). A fully-empty $subRanges is therefore
+     * never passed here from real production code.
+     *
+     * Once at least one affiliation exists somewhere in the period, a gap
+     * or overlap between sub-ranges — including one that starts mid-period
+     * or dangles before the period's end, since the plan does not carve out
+     * a special "partial period is fine" case — reuses
+     * NoActiveSocialSecurityAffiliationException, which its own docblock
+     * already documents as covering both "zero" and "gap/overlap" with one
+     * generic message, rather than inventing a bespoke partial-coverage
+     * exception.
+     *
+     * employee_id/entity_type for the exception are read off the first
+     * sub-range's own affiliation rather than accepted as separate
+     * parameters — every row in $subRanges was queried for the same
+     * employee/entity_type by construction, so the first one is
+     * representative of all of them.
+     *
+     * Declared `protected`, not `private`, deliberately deviating from
+     * assertSubRangesTilePeriodExactly()'s visibility for the same reason
+     * authorizedOvertimeLines()/fixedDeductionLines() already do: this
+     * commit's anonymous-subclass test wrapper needs direct access, and a
+     * `private` method here would not be reachable from it.
+     *
+     * @param  Collection<int, array{affiliation: SocialSecurityAffiliation, from: CarbonInterface, to: CarbonInterface}>  $subRanges
+     *
+     * @throws NoActiveSocialSecurityAffiliationException
+     */
+    protected function assertAffiliationSubRangesTilePeriodExactly(Collection $subRanges, PayrollPeriod $period): void
+    {
+        /** @var SocialSecurityAffiliation $firstAffiliation */
+        $firstAffiliation = $subRanges->first()['affiliation'];
+
+        $expectedFrom = $period->start_date;
+
+        foreach ($subRanges as $subRange) {
+            if (! $subRange['from']->equalTo($expectedFrom)) {
+                throw new NoActiveSocialSecurityAffiliationException($firstAffiliation->employee_id, $firstAffiliation->entity_type, $period->start_date);
+            }
+
+            $expectedFrom = $subRange['to']->copy()->addDay();
+        }
+
+        if (! $subRanges->last()['to']->equalTo($period->end_date)) {
+            throw new NoActiveSocialSecurityAffiliationException($firstAffiliation->employee_id, $firstAffiliation->entity_type, $period->start_date);
         }
     }
 

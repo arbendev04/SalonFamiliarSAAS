@@ -6,6 +6,7 @@ use App\Exceptions\AmbiguousContractException;
 use App\Exceptions\InvalidPayrollPeriodStatusException;
 use App\Exceptions\MissingLaborRuleParameterException;
 use App\Exceptions\NoActiveLaborRuleVersionException;
+use App\Exceptions\NoActiveSocialSecurityAffiliationException;
 use App\Exceptions\NoAttendanceOrNoveltyDataException;
 use App\Models\AttendanceRecord;
 use App\Models\Company;
@@ -22,6 +23,7 @@ use App\Models\PayrollEntryLine;
 use App\Models\PayrollPeriod;
 use App\Models\SalaryHistory;
 use App\Models\Shift;
+use App\Models\SocialSecurityAffiliation;
 use App\Services\Payroll\PayrollCalculationService;
 use App\Services\Tenancy\CurrentCompany;
 use Carbon\CarbonInterface;
@@ -66,6 +68,22 @@ class PayrollCalculationServiceTest extends TestCase
             public function callResolveContractSubRanges(Employee $employee, PayrollPeriod $period): Collection
             {
                 return $this->resolveContractSubRanges($employee, $period);
+            }
+
+            /**
+             * @return Collection<int, array{affiliation: SocialSecurityAffiliation, from: CarbonInterface, to: CarbonInterface}>
+             */
+            public function callResolveAffiliationSubRanges(Employee $employee, string $entityType, PayrollPeriod $period): Collection
+            {
+                return $this->resolveAffiliationSubRanges($employee, $entityType, $period);
+            }
+
+            /**
+             * @param  Collection<int, array{affiliation: SocialSecurityAffiliation, from: CarbonInterface, to: CarbonInterface}>  $subRanges
+             */
+            public function callAssertAffiliationSubRangesTilePeriodExactly(Collection $subRanges, PayrollPeriod $period): void
+            {
+                $this->assertAffiliationSubRangesTilePeriodExactly($subRanges, $period);
             }
 
             public function callResolveDailyRate(EmploymentContract $contract, CarbonInterface $from): float
@@ -121,6 +139,17 @@ class PayrollCalculationServiceTest extends TestCase
             'start_date' => $start,
             'end_date' => $end,
             'base_salary' => $baseSalary,
+        ]);
+    }
+
+    private function affiliation(string $entityType, string $start, ?string $end): SocialSecurityAffiliation
+    {
+        return SocialSecurityAffiliation::factory()->create([
+            'company_id' => $this->company->id,
+            'employee_id' => $this->employee->id,
+            'entity_type' => $entityType,
+            'start_date' => $start,
+            'end_date' => $end,
         ]);
     }
 
@@ -201,6 +230,92 @@ class PayrollCalculationServiceTest extends TestCase
         $this->expectException(AmbiguousContractException::class);
 
         $this->service->callResolveContractSubRanges($this->employee, $period);
+    }
+
+    public function test_zero_affiliations_for_the_entity_type_over_the_whole_period_returns_an_empty_collection_without_throwing()
+    {
+        $period = $this->period('2025-01-01', '2025-01-15');
+        // Deliberately no SocialSecurityAffiliation at all for 'CATEGORY_A'
+        // — a company that has not configured/affiliated this employee for
+        // this entity_type yet still calculates payroll fine, just without
+        // this concept's line (unlike the contract case, this is never an
+        // error).
+
+        $subRanges = $this->service->callResolveAffiliationSubRanges($this->employee, 'CATEGORY_A', $period);
+
+        $this->assertCount(0, $subRanges);
+    }
+
+    public function test_one_affiliation_covering_the_whole_period_exactly_produces_a_single_sub_range_bounded_by_the_period()
+    {
+        $period = $this->period('2025-01-01', '2025-01-15');
+        $affiliation = $this->affiliation('CATEGORY_A', '2024-06-01', null);
+
+        $subRanges = $this->service->callResolveAffiliationSubRanges($this->employee, 'CATEGORY_A', $period);
+
+        $this->assertCount(1, $subRanges);
+        $this->assertSame($affiliation->id, $subRanges->first()['affiliation']->id);
+        $this->assertTrue($subRanges->first()['from']->equalTo(Carbon::parse('2025-01-01')));
+        $this->assertTrue($subRanges->first()['to']->equalTo(Carbon::parse('2025-01-15')));
+    }
+
+    public function test_two_affiliations_tiling_the_period_with_a_boundary_mid_period_produce_two_correctly_clipped_sub_ranges()
+    {
+        $period = $this->period('2025-03-01', '2025-03-15');
+        $before = $this->affiliation('CATEGORY_A', '2025-01-01', '2025-03-08');
+        $after = $this->affiliation('CATEGORY_A', '2025-03-09', null);
+
+        $subRanges = $this->service->callResolveAffiliationSubRanges($this->employee, 'CATEGORY_A', $period);
+
+        $this->assertCount(2, $subRanges);
+
+        $this->assertSame($before->id, $subRanges->first()['affiliation']->id);
+        $this->assertTrue($subRanges->first()['from']->equalTo(Carbon::parse('2025-03-01')));
+        $this->assertTrue($subRanges->first()['to']->equalTo(Carbon::parse('2025-03-08')));
+
+        $this->assertSame($after->id, $subRanges->last()['affiliation']->id);
+        $this->assertTrue($subRanges->last()['from']->equalTo(Carbon::parse('2025-03-09')));
+        $this->assertTrue($subRanges->last()['to']->equalTo(Carbon::parse('2025-03-15')));
+    }
+
+    public function test_a_gap_between_two_affiliations_mid_period_throws_no_active_social_security_affiliation_exception()
+    {
+        $period = $this->period('2025-02-01', '2025-02-15');
+        // No affiliation at all covers 2025-02-06 through 2025-02-09, but at
+        // least one affiliation of this entity_type exists somewhere in the
+        // period — this makes the gap an error, unlike the zero-affiliations
+        // case above.
+        $this->affiliation('CATEGORY_A', '2025-01-01', '2025-02-05');
+        $this->affiliation('CATEGORY_A', '2025-02-10', null);
+
+        $this->expectException(NoActiveSocialSecurityAffiliationException::class);
+
+        $this->service->callResolveAffiliationSubRanges($this->employee, 'CATEGORY_A', $period);
+    }
+
+    public function test_an_affiliation_starting_mid_period_with_nothing_before_it_is_treated_as_a_gap_and_throws()
+    {
+        $period = $this->period('2025-02-01', '2025-02-15');
+        // Nothing covers 2025-02-01 through 2025-02-09 — the plan does not
+        // carve out a special "partial period is fine" case, so this is
+        // treated identically to a gap strictly between two affiliations.
+        $this->affiliation('CATEGORY_A', '2025-02-10', null);
+
+        $this->expectException(NoActiveSocialSecurityAffiliationException::class);
+
+        $this->service->callResolveAffiliationSubRanges($this->employee, 'CATEGORY_A', $period);
+    }
+
+    public function test_an_affiliation_ending_mid_period_with_nothing_after_it_is_treated_as_a_gap_and_throws()
+    {
+        $period = $this->period('2025-02-01', '2025-02-15');
+        // Nothing covers 2025-02-06 through 2025-02-15 — a dangling end,
+        // same treatment as any other gap.
+        $this->affiliation('CATEGORY_A', '2025-01-01', '2025-02-05');
+
+        $this->expectException(NoActiveSocialSecurityAffiliationException::class);
+
+        $this->service->callResolveAffiliationSubRanges($this->employee, 'CATEGORY_A', $period);
     }
 
     public function test_resolve_daily_rate_uses_the_salary_history_revision_covering_the_sub_range_start_when_one_exists()
