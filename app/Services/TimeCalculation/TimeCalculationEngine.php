@@ -10,6 +10,8 @@ use App\Models\AttendanceRecord;
 use App\Models\Employee;
 use App\Models\LaborRule;
 use App\Models\LaborRuleVersion;
+use App\Models\NoveltyRecord;
+use App\Models\OvertimeRecord;
 use App\Models\Shift;
 use App\Models\ShiftBreak;
 use App\Models\TimeCalculationRun;
@@ -39,6 +41,7 @@ class TimeCalculationEngine
 
     public function __construct(
         private readonly AttendanceNetEventsResolver $netEventsResolver,
+        private readonly NoveltyRecordLookup $noveltyLookup,
     ) {}
 
     /**
@@ -86,12 +89,18 @@ class TimeCalculationEngine
             ? 0
             : $this->resolveWorkedMinutes($netEvents, $clockIn, $clockOut);
 
-        [$ordinaryMinutes, $overtimeCandidateMinutes, $missingMinutes] = $this->classify(
+        // Resolved unconditionally (not gated on $isFullAbsence) because
+        // classify() itself is what decides whether the covering novelty is
+        // acted upon this phase — see its docblock for the exact scoping.
+        $coveringNovelty = $this->noveltyLookup->resolve($employee, $date);
+
+        [$ordinaryMinutes, $overtimeCandidateMinutes, $missingMinutes, $justifiedMinutes] = $this->classify(
             $workedMinutes,
             $plannedMinutes,
             $toleranceMinutes,
             $roundingMinutes,
             $isFullAbsence,
+            $coveringNovelty,
         );
 
         return DB::transaction(function () use (
@@ -107,7 +116,23 @@ class TimeCalculationEngine
             $ordinaryMinutes,
             $overtimeCandidateMinutes,
             $missingMinutes,
+            $justifiedMinutes,
+            $isFullAbsence,
+            $coveringNovelty,
         ) {
+            // justification_json only documents a novelty that actually
+            // justified the day (the same $isFullAbsence && $coveringNovelty
+            // !== null predicate classify() used for justified_minutes) —
+            // never a novelty that merely overlaps a day with real clock
+            // events, which this phase deliberately leaves unjustified (see
+            // classify()'s docblock).
+            $justificationJson = ($isFullAbsence && $coveringNovelty !== null)
+                ? [
+                    'novelty_record_id' => $coveringNovelty->id,
+                    'novelty_type_code' => $coveringNovelty->noveltyType->code,
+                ]
+                : null;
+
             $record = AttendanceRecord::updateOrCreate(
                 ['employee_id' => $employee->id, 'date' => $date->toDateString()],
                 [
@@ -124,6 +149,8 @@ class TimeCalculationEngine
                     'ordinary_minutes' => $ordinaryMinutes,
                     'overtime_candidate_minutes' => $overtimeCandidateMinutes,
                     'missing_minutes' => $missingMinutes,
+                    'justified_minutes' => $justifiedMinutes,
+                    'justification_json' => $justificationJson,
                     'rule_version_id' => $ruleVersion->id,
                     'calculated_at' => now(),
                 ],
@@ -137,6 +164,30 @@ class TimeCalculationEngine
                 'inputs_hash' => $this->hashInputs($shift, $netEvents, $ruleVersion),
                 'output_ref' => $record->id,
             ]);
+
+            if ($overtimeCandidateMinutes > 0) {
+                $existingOvertimeRecord = OvertimeRecord::query()
+                    ->where('employee_id', $employee->id)
+                    ->where('shift_id', $shift->id)
+                    ->first();
+
+                if ($existingOvertimeRecord === null) {
+                    OvertimeRecord::create([
+                        'company_id' => $employee->company_id,
+                        'employee_id' => $employee->id,
+                        'shift_id' => $shift->id,
+                        'detected_minutes' => $overtimeCandidateMinutes,
+                        'status' => 'detected',
+                    ]);
+                } elseif ($existingOvertimeRecord->status === 'detected') {
+                    $existingOvertimeRecord->update(['detected_minutes' => $overtimeCandidateMinutes]);
+                }
+                // A record already at requested/authorized/rejected/paid is
+                // NEVER touched by a recalculation — a human decision must
+                // never be silently regressed by re-running the engine. See
+                // App\Services\Overtime\OvertimeRecordService's docblock for
+                // the full 4-state lifecycle this protects.
+            }
 
             return $record;
         });
@@ -284,7 +335,8 @@ class TimeCalculationEngine
     }
 
     /**
-     * @return array{0: int, 1: int, 2: int}
+     * @return array{0: int, 1: int, 2: int, 3: int} Ordinary, overtime
+     *                                               candidate, missing, and justified minutes, in that order.
      */
     private function classify(
         int $workedMinutes,
@@ -292,6 +344,7 @@ class TimeCalculationEngine
         int $toleranceMinutes,
         int $roundingMinutes,
         bool $isFullAbsence,
+        ?NoveltyRecord $coveringNovelty,
     ): array {
         $diff = $workedMinutes - $plannedMinutes;
 
@@ -301,20 +354,34 @@ class TimeCalculationEngine
             ? $this->roundToNearestMultiple(max(0, $diff - $toleranceMinutes), $roundingMinutes)
             : 0;
 
-        if ($isFullAbsence) {
+        // Fase 8, section D of the plan: only a FULL-day absence can be
+        // justified by an approved novelty this phase — the sole case
+        // documented in .ai/09-TIME-CALCULATION.md "Casos especiales"
+        // ("Permiso/ausencia aprobada sin marcación física"). A day with
+        // SOME real clock events plus a covering novelty (e.g. the employee
+        // clocked in anyway on a day an approved leave also covers) is
+        // explicitly out of scope: no proration rule is invented for it, and
+        // ordinary/overtime/missing classification proceeds exactly as if
+        // the novelty were not there.
+        if ($isFullAbsence && $coveringNovelty !== null) {
+            $missingMinutes = 0;
+            $justifiedMinutes = $this->roundToNearestMultiple($plannedMinutes, $roundingMinutes);
+        } elseif ($isFullAbsence) {
             // Full absence is quantifiable (unlike a missing clock_out, it
             // is never ambiguous), and .ai/09-TIME-CALCULATION.md /
             // "Decisiones ya tomadas" fixes missing_minutes to the full
             // planned amount — tolerance is a grace margin around a real
             // marking, never a forgiveness window for a no-show.
             $missingMinutes = $this->roundToNearestMultiple($plannedMinutes, $roundingMinutes);
+            $justifiedMinutes = 0;
         } else {
             $missingMinutes = $diff < 0
                 ? $this->roundToNearestMultiple(max(0, abs($diff) - $toleranceMinutes), $roundingMinutes)
                 : 0;
+            $justifiedMinutes = 0;
         }
 
-        return [$ordinaryMinutes, $overtimeCandidateMinutes, $missingMinutes];
+        return [$ordinaryMinutes, $overtimeCandidateMinutes, $missingMinutes, $justifiedMinutes];
     }
 
     private function roundToNearestMultiple(int $minutes, int $roundingMinutes): int

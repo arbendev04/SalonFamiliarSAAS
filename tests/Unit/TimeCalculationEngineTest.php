@@ -3,6 +3,7 @@
 namespace Tests\Unit;
 
 use App\Exceptions\AmbiguousLaborRuleVersionException;
+use App\Exceptions\InvalidOvertimeRecordStatusException;
 use App\Exceptions\MissingCriticalAttendanceEventException;
 use App\Exceptions\MissingLaborRuleParameterException;
 use App\Exceptions\NoActiveLaborRuleVersionException;
@@ -13,11 +14,20 @@ use App\Models\Company;
 use App\Models\Employee;
 use App\Models\LaborRule;
 use App\Models\LaborRuleVersion;
+use App\Models\LeaveRecord;
+use App\Models\LeaveType;
+use App\Models\NoveltyRecord;
+use App\Models\NoveltyType;
+use App\Models\OvertimeRecord;
 use App\Models\Shift;
 use App\Models\ShiftAssignment;
 use App\Models\ShiftBreak;
 use App\Models\TimeCalculationRun;
+use App\Models\User;
+use App\Services\Overtime\OvertimeRecordService;
+use App\Services\Tenancy\CurrentCompany;
 use App\Services\TimeCalculation\AttendanceNetEventsResolver;
+use App\Services\TimeCalculation\NoveltyRecordLookup;
 use App\Services\TimeCalculation\TimeCalculationEngine;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
@@ -39,7 +49,50 @@ class TimeCalculationEngineTest extends TestCase
 
         $this->company = Company::factory()->create();
         $this->employee = Employee::factory()->create(['company_id' => $this->company->id]);
-        $this->engine = new TimeCalculationEngine(new AttendanceNetEventsResolver);
+        $this->engine = new TimeCalculationEngine(new AttendanceNetEventsResolver, new NoveltyRecordLookup);
+    }
+
+    /**
+     * Builds an APPROVED novelty covering [$dateFrom, $dateTo], created the
+     * way App\Services\Leave\LeaveRecordService::generateNoveltyAndAbsence()
+     * actually creates one (an approved LeaveRecord behind it, source_type/
+     * source_id pointing back to it, status mirroring the leave record's own
+     * status) rather than a shortcut that skips fields the real path would
+     * populate. The service itself is not invoked because this is engine
+     * unit-test scope: NoveltyRecordLookup (already covered by its own test)
+     * only ever reads the novelty_records row, never the leave_records
+     * lifecycle that produced it.
+     */
+    private function approvedNoveltyCovering(string $dateFrom, ?string $dateTo = null): NoveltyRecord
+    {
+        $dateTo ??= $dateFrom;
+
+        $leaveType = LeaveType::factory()->create(['company_id' => $this->company->id]);
+        $noveltyType = NoveltyType::factory()->create([
+            'company_id' => $this->company->id,
+            'code' => $leaveType->code,
+            'affects_time_calc' => true,
+        ]);
+
+        $leaveRecord = LeaveRecord::factory()->create([
+            'company_id' => $this->company->id,
+            'employee_id' => $this->employee->id,
+            'leave_type_id' => $leaveType->id,
+            'date_from' => $dateFrom,
+            'date_to' => $dateTo,
+            'status' => 'approved',
+        ]);
+
+        return NoveltyRecord::factory()->create([
+            'company_id' => $this->company->id,
+            'employee_id' => $this->employee->id,
+            'novelty_type_id' => $noveltyType->id,
+            'date_from' => $dateFrom,
+            'date_to' => $dateTo,
+            'source_type' => 'leave_records',
+            'source_id' => $leaveRecord->id,
+            'status' => 'approved',
+        ]);
     }
 
     private function ruleVersion(array $parameters, ?string $effectiveFrom = null, ?string $effectiveTo = null): LaborRuleVersion
@@ -227,6 +280,185 @@ class TimeCalculationEngineTest extends TestCase
         $this->assertSame(0, $record->ordinary_minutes);
         $this->assertSame(0, $record->overtime_candidate_minutes);
         $this->assertSame(0, $record->worked_json['worked_minutes']);
+
+        // Regression guard for Fase 8: a full absence with NO covering
+        // novelty stays entirely unjustified.
+        $this->assertSame(0, $record->justified_minutes);
+        $this->assertNull($record->justification_json);
+    }
+
+    /**
+     * Roadmap-mandated acceptance test for Fase 8: an approved leave record
+     * (leave_records -> novelty_records, via approvedNoveltyCovering()) makes
+     * a full-day absence justified instead of missing.
+     */
+    public function test_an_approved_leave_record_makes_a_full_absence_justified_not_missing()
+    {
+        $this->ruleVersion(['tolerance_minutes' => 15, 'rounding_minutes' => 5]);
+        $this->standardShift('2026-02-10');
+        $novelty = $this->approvedNoveltyCovering('2026-02-10');
+
+        $record = $this->engine->calculateForDate($this->employee, Carbon::parse('2026-02-10'));
+
+        // planned = 420, already a multiple of 5.
+        $this->assertSame(0, $record->missing_minutes);
+        $this->assertSame(420, $record->justified_minutes);
+        $this->assertSame(
+            [
+                'novelty_record_id' => $novelty->id,
+                'novelty_type_code' => $novelty->noveltyType->code,
+            ],
+            $record->justification_json,
+        );
+    }
+
+    /**
+     * Edge case explicitly out of this phase's scope (see classify()'s
+     * docblock): a day with REAL clock events plus a covering novelty
+     * anyway. justified_minutes stays 0 and justification_json stays null —
+     * no proration rule is invented for a partially-worked day, and ordinary/
+     * overtime/missing classification proceeds exactly as if the novelty
+     * did not exist.
+     */
+    public function test_a_day_with_real_clock_events_and_a_covering_novelty_is_not_justified()
+    {
+        $this->ruleVersion(['tolerance_minutes' => 15, 'rounding_minutes' => 5]);
+        $this->standardShift('2026-02-10');
+        $this->event('clock_in', '2026-02-10 06:07:00');
+        $this->event('break_start', '2026-02-10 12:00:00');
+        $this->event('break_end', '2026-02-10 13:00:00');
+        $this->event('clock_out', '2026-02-10 14:23:00');
+        $this->approvedNoveltyCovering('2026-02-10');
+
+        $record = $this->engine->calculateForDate($this->employee, Carbon::parse('2026-02-10'));
+
+        // Same result as the docs example without any novelty at all.
+        $this->assertSame(420, $record->ordinary_minutes);
+        $this->assertSame(0, $record->overtime_candidate_minutes);
+        $this->assertSame(0, $record->missing_minutes);
+        $this->assertSame(0, $record->justified_minutes);
+        $this->assertNull($record->justification_json);
+    }
+
+    public function test_no_active_labor_rule_version_still_throws_even_with_a_covering_novelty()
+    {
+        // Regression guard: an approved novelty must never bypass the
+        // pre-existing NoActiveLaborRuleVersionException blocking behavior
+        // from Fase 7 — the rule version is resolved before the novelty is
+        // ever looked up.
+        $this->standardShift('2026-02-10');
+        $this->approvedNoveltyCovering('2026-02-10');
+
+        $this->expectException(NoActiveLaborRuleVersionException::class);
+
+        $this->engine->calculateForDate($this->employee, Carbon::parse('2026-02-10'));
+    }
+
+    public function test_a_detected_overtime_candidate_creates_a_single_detected_overtime_record()
+    {
+        $this->ruleVersion(['tolerance_minutes' => 15, 'rounding_minutes' => 1]);
+        $shift = $this->standardShift('2026-02-10');
+        $this->event('clock_in', '2026-02-10 06:07:00');
+        $this->event('break_start', '2026-02-10 12:00:00');
+        $this->event('break_end', '2026-02-10 13:00:00');
+        $this->event('clock_out', '2026-02-10 14:23:00');
+
+        $record = $this->engine->calculateForDate($this->employee, Carbon::parse('2026-02-10'));
+
+        $this->assertSame(1, $record->overtime_candidate_minutes);
+        $this->assertSame(1, OvertimeRecord::query()->count());
+
+        $overtime = OvertimeRecord::query()->firstOrFail();
+        $this->assertSame($this->employee->id, $overtime->employee_id);
+        $this->assertSame($shift->id, $overtime->shift_id);
+        $this->assertSame('detected', $overtime->status);
+        $this->assertSame(1, $overtime->detected_minutes);
+    }
+
+    public function test_recalculating_the_same_date_updates_the_detected_overtime_record_without_duplicating_it()
+    {
+        $this->ruleVersion(['tolerance_minutes' => 15, 'rounding_minutes' => 1]);
+        $this->standardShift('2026-02-10');
+        $this->event('clock_in', '2026-02-10 06:07:00');
+        $this->event('break_start', '2026-02-10 12:00:00');
+        $this->event('break_end', '2026-02-10 13:00:00');
+        $this->event('clock_out', '2026-02-10 14:23:00');
+
+        $this->engine->calculateForDate($this->employee, Carbon::parse('2026-02-10'));
+        $this->assertSame(1, OvertimeRecord::query()->count());
+        $this->assertSame(1, OvertimeRecord::query()->firstOrFail()->detected_minutes);
+
+        // A later clock_out raises the excess (see
+        // test_rounding_is_applied_to_the_classified_minutes for the same
+        // arithmetic): diff +27, excess over tolerance 15 = 12.
+        $this->event('clock_out', '2026-02-10 14:34:00');
+        $this->engine->calculateForDate($this->employee, Carbon::parse('2026-02-10'));
+
+        $this->assertSame(1, OvertimeRecord::query()->count());
+        $this->assertSame(12, OvertimeRecord::query()->firstOrFail()->detected_minutes);
+    }
+
+    /**
+     * Roadmap-mandated acceptance test for Fase 8, exercised end-to-end
+     * through the engine (not a factory-built `detected` row as in
+     * OvertimeRecordServiceTest): an overtime record the engine itself
+     * detected can never reach `paid` without going through
+     * authorize() first.
+     */
+    public function test_an_engine_detected_overtime_record_never_reaches_paid_without_authorization()
+    {
+        $this->ruleVersion(['tolerance_minutes' => 15, 'rounding_minutes' => 1]);
+        $this->standardShift('2026-02-10');
+        $this->event('clock_in', '2026-02-10 06:07:00');
+        $this->event('break_start', '2026-02-10 12:00:00');
+        $this->event('break_end', '2026-02-10 13:00:00');
+        $this->event('clock_out', '2026-02-10 14:23:00');
+
+        $this->engine->calculateForDate($this->employee, Carbon::parse('2026-02-10'));
+        $overtime = OvertimeRecord::query()->firstOrFail();
+        $this->assertSame('detected', $overtime->status);
+
+        app(CurrentCompany::class)->set($this->company);
+        $service = app(OvertimeRecordService::class);
+        $actor = User::factory()->create();
+
+        $this->expectException(InvalidOvertimeRecordStatusException::class);
+
+        $service->markPaid($overtime, $actor);
+    }
+
+    /**
+     * A human decision (authorize()) must never be silently regressed by a
+     * later engine recalculation for the same shift — see the engine's
+     * docblock comment at the overtime upsert.
+     */
+    public function test_recalculation_never_regresses_an_already_authorized_overtime_record()
+    {
+        $this->ruleVersion(['tolerance_minutes' => 15, 'rounding_minutes' => 1]);
+        $this->standardShift('2026-02-10');
+        $this->event('clock_in', '2026-02-10 06:07:00');
+        $this->event('break_start', '2026-02-10 12:00:00');
+        $this->event('break_end', '2026-02-10 13:00:00');
+        $this->event('clock_out', '2026-02-10 14:23:00');
+
+        $this->engine->calculateForDate($this->employee, Carbon::parse('2026-02-10'));
+        $detected = OvertimeRecord::query()->firstOrFail();
+
+        app(CurrentCompany::class)->set($this->company);
+        $service = app(OvertimeRecordService::class);
+        $actor = User::factory()->create();
+        $requested = $service->request($detected, $actor, 1);
+        $authorized = $service->authorize($requested, $actor, 1);
+
+        // A later clock_out would otherwise raise detected_minutes to 12
+        // (see test_recalculating_the_same_date_updates_the_detected_overtime_record_without_duplicating_it).
+        $this->event('clock_out', '2026-02-10 14:34:00');
+        $this->engine->calculateForDate($this->employee, Carbon::parse('2026-02-10'));
+
+        $authorized->refresh();
+        $this->assertSame(1, OvertimeRecord::query()->count());
+        $this->assertSame('authorized', $authorized->status);
+        $this->assertSame(1, $authorized->authorized_minutes);
     }
 
     public function test_missing_clock_out_throws()

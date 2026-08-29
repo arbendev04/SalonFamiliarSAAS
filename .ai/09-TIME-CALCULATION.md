@@ -27,6 +27,7 @@ Definir el motor de **Time Calculation**, que cruza el tiempo planificado ([08-S
 - **Ventana de gracia**: periodo, generalmente breve, alrededor de la hora planificada de entrada/salida dentro del cual una marcación se considera "a tiempo" a efectos de tolerancia.
 - **Regla laboral versionada por fecha de vigencia**: instancia del patrón "effective-dated lookup" documentado en [04-DOMAIN-MODEL.md](./04-DOMAIN-MODEL.md) — una `labor_rule_version` es válida únicamente dentro de su rango `effective_from`/`effective_to`; el motor siempre resuelve la versión vigente para la fecha calculada, nunca "la última" ni "la más reciente" sin verificar el rango.
 - **Categorías de tiempo del framework** (según la convención transversal del blueprint): jornada ordinaria, tolerancias, redondeo, nocturno, dominical/festivo — todas expresadas como *magnitudes de tiempo* aquí; su traducción a dinero (recargos y conceptos salariales) es exclusiva de [10-PAYROLL.md](./10-PAYROLL.md).
+  - **Fase 8 — confirmado por escrito**: festivo/dominical como magnitud de tiempo sigue bloqueado por el `PENDING DECISION` de legislación de la línea 21. `holidays` se construyó en Fase 8 como catálogo (con CRUD), pero el motor **no lo consulta todavía** — ningún criterio de aceptación de Fase 8 lo ejercita. Lo que Fase 8 sí conecta es `novelty_records` (ausencia justificada) y la detección de `overtime_records`; ninguno de los dos requiere resolver la ventana nocturna o el calendario festivo.
 
 ## Entidades
 
