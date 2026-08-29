@@ -150,4 +150,20 @@ class Employee extends Model
     {
         return EmployeeSchedule::activeForEmployeeAt($this->id, $date);
     }
+
+    /**
+     * @return HasMany<PayrollEntry, $this>
+     */
+    public function payrollEntries(): HasMany
+    {
+        return $this->hasMany(PayrollEntry::class);
+    }
+
+    /**
+     * @return HasMany<PayrollDeductionPlan, $this>
+     */
+    public function payrollDeductionPlans(): HasMany
+    {
+        return $this->hasMany(PayrollDeductionPlan::class);
+    }
 }

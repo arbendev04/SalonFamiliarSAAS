@@ -99,4 +99,20 @@ class EmploymentContract extends Model
 
         return $candidates->first();
     }
+
+    /**
+     * @return HasMany<PayrollEntry, $this>
+     */
+    public function payrollEntries(): HasMany
+    {
+        return $this->hasMany(PayrollEntry::class, 'contract_id');
+    }
+
+    /**
+     * @return HasMany<PayrollEntryLine, $this>
+     */
+    public function payrollEntryLines(): HasMany
+    {
+        return $this->hasMany(PayrollEntryLine::class, 'contract_id');
+    }
 }
