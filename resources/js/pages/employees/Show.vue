@@ -12,6 +12,7 @@ import { dashboard } from '@/routes';
 import { index } from '@/routes/employees';
 import { index as attendanceIndex } from '@/routes/employees/attendance';
 import { index as leaveRecordsIndex } from '@/routes/employees/leave-records';
+import { index as overtimeRecordsIndex } from '@/routes/employees/overtime-records';
 import { index as shiftsIndex } from '@/routes/employees/shifts';
 import { index as timeCalculationIndex } from '@/routes/employees/time-calculation';
 
@@ -88,6 +89,12 @@ defineOptions({
                     class="text-sm underline underline-offset-4"
                 >
                     Ver licencias
+                </Link>
+                <Link
+                    :href="overtimeRecordsIndex(employee.id)"
+                    class="text-sm underline underline-offset-4"
+                >
+                    Ver horas extra
                 </Link>
             </div>
         </div>

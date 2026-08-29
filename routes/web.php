@@ -10,6 +10,7 @@ use App\Http\Controllers\EmploymentContractController;
 use App\Http\Controllers\HolidayController;
 use App\Http\Controllers\LaborRuleVersionController;
 use App\Http\Controllers\LeaveRecordController;
+use App\Http\Controllers\OvertimeRecordController;
 use App\Http\Controllers\PayrollInformationController;
 use App\Http\Controllers\PositionController;
 use App\Http\Controllers\ShiftAssignmentController;
@@ -70,6 +71,12 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::post('employees/{employee}/leave-records', [LeaveRecordController::class, 'store'])->name('employees.leave-records.store');
     Route::post('leave-records/{record}/approve', [LeaveRecordController::class, 'approve'])->name('leave-records.approve');
     Route::post('leave-records/{record}/reject', [LeaveRecordController::class, 'reject'])->name('leave-records.reject');
+
+    Route::get('employees/{employee}/overtime-records', [OvertimeRecordController::class, 'index'])->name('employees.overtime-records.index');
+    Route::post('overtime-records/{record}/request', [OvertimeRecordController::class, 'request'])->name('overtime-records.request');
+    Route::post('overtime-records/{record}/authorize', [OvertimeRecordController::class, 'authorize'])->name('overtime-records.authorize');
+    Route::post('overtime-records/{record}/reject', [OvertimeRecordController::class, 'reject'])->name('overtime-records.reject');
+    Route::post('overtime-records/{record}/mark-paid', [OvertimeRecordController::class, 'markPaid'])->name('overtime-records.mark-paid');
 });
 
 require __DIR__.'/settings.php';
