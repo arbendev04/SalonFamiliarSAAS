@@ -444,6 +444,8 @@ class TimeCalculationEngineTest extends TestCase
             'ordinary_minutes',
             'overtime_candidate_minutes',
             'missing_minutes',
+            'justified_minutes',
+            'justification_json',
             'rule_version_id',
             'calculated_at',
         ];

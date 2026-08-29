@@ -18,6 +18,7 @@ use Database\Seeders\PermissionSeeder;
 use Database\Seeders\RoleSeeder;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Str;
 use Inertia\Support\SessionKey;
 use Tests\TestCase;
 
@@ -133,6 +134,51 @@ class AttendanceRecordTest extends TestCase
         $this->assertIsArray($record->planned_json);
         $this->assertIsArray($record->worked_json);
         $this->assertSame($record->date->format('Y-m-d'), $record->date->format('Y-m-d'));
+    }
+
+    /**
+     * Schema-only commit: verifies the justified_minutes/justification_json
+     * columns exist with the documented defaults. The engine does not
+     * populate them yet (that lands in a later commit) — this only proves
+     * the columns and their defaults are wired correctly.
+     */
+    public function test_a_record_created_without_justification_fields_gets_the_documented_defaults()
+    {
+        $ruleVersion = LaborRuleVersion::factory()->create(['company_id' => $this->company->id]);
+
+        $record = AttendanceRecord::factory()->create([
+            'company_id' => $this->company->id,
+            'employee_id' => $this->employee->id,
+            'rule_version_id' => $ruleVersion->id,
+        ]);
+
+        $record->refresh();
+
+        $this->assertSame(0, $record->justified_minutes);
+        $this->assertNull($record->justification_json);
+    }
+
+    public function test_justification_json_round_trips_as_an_array_when_set()
+    {
+        $ruleVersion = LaborRuleVersion::factory()->create(['company_id' => $this->company->id]);
+
+        $justification = [
+            'novelty_record_id' => (string) Str::uuid(),
+            'novelty_type_code' => 'VACACIONES',
+        ];
+
+        $record = AttendanceRecord::factory()->create([
+            'company_id' => $this->company->id,
+            'employee_id' => $this->employee->id,
+            'rule_version_id' => $ruleVersion->id,
+            'justified_minutes' => 480,
+            'justification_json' => $justification,
+        ]);
+
+        $fresh = AttendanceRecord::query()->findOrFail($record->id);
+
+        $this->assertIsArray($fresh->justification_json);
+        $this->assertSame($justification, $fresh->justification_json);
     }
 
     public function test_a_second_record_for_the_same_employee_and_date_violates_the_unique_constraint()

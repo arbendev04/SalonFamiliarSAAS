@@ -35,6 +35,8 @@ class AttendanceRecord extends Model
         'ordinary_minutes',
         'overtime_candidate_minutes',
         'missing_minutes',
+        'justified_minutes',
+        'justification_json',
         'rule_version_id',
         'calculated_at',
     ];
@@ -48,6 +50,7 @@ class AttendanceRecord extends Model
             'date' => 'date:Y-m-d',
             'planned_json' => 'array',
             'worked_json' => 'array',
+            'justification_json' => 'array',
             'calculated_at' => 'datetime',
         ];
     }
