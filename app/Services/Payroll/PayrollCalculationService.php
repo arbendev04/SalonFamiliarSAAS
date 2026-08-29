@@ -24,6 +24,7 @@ use App\Models\PayrollPeriod;
 use App\Models\SalaryHistory;
 use App\Models\SocialSecurityAffiliation;
 use App\Models\SocialSecurityConceptDefinition;
+use App\Models\SocialSecurityContribution;
 use App\Models\SocialSecurityEntity;
 use App\Services\TimeCalculation\TimeCalculationEngine;
 use Carbon\CarbonInterface;
@@ -913,16 +914,44 @@ class PayrollCalculationService
      * in Fase 8) would otherwise make them unreachable once a tenant is
      * active.
      *
+     * Immediately after fixedDeductionLines(), and still before the
+     * transaction opens, socialSecurityContributionLines() is computed too
+     * (composed-knitting-dusk.md, "Punto de integración en
+     * calculateForEmployee()"). It needs $earningLines — this employee/
+     * period's BASE_SALARY and OVERTIME line amounts, each annotated with
+     * its resolved payroll_concept_definitions id — which
+     * proratedBaseSalaryLines()/authorizedOvertimeLines() do not carry
+     * themselves, so it is built here by re-using the same
+     * $baseSalaryConceptId/$overtimeConceptId this method already resolves
+     * for persistence, never a second/parallel resolution mechanism.
+     * NoActiveSocialSecurityAffiliationException joins the same six-way
+     * catch below: a social-security gap or rate-configuration problem for
+     * ONE employee blocks only that employee, exactly like every other
+     * documented exception here.
+     *
      * Persistence happens in ONE DB::transaction(): updateOrCreate() the
      * PayrollEntry (full replace, never an incremental patch — same
      * "always regenerate completely" discipline as AttendanceRecord), then
      * delete ALL of its existing payroll_entry_lines and recreate them fresh
-     * from the three computed line sets. This is safe to call repeatedly
+     * from the computed line sets. This is safe to call repeatedly
      * for the same employee/period (e.g. after an underlying
      * AttendanceRecord changes) — see the unique constraint on
-     * (payroll_period_id, employee_id).
+     * (payroll_period_id, employee_id). The same full-replace discipline
+     * applies to social_security_contributions: any contribution rows from
+     * a previous calculation of this entry are deleted (only reachable
+     * after their paired lines are already gone, since
+     * payroll_entry_lines.social_security_contribution_id is
+     * restrictOnDelete) before the fresh set from
+     * socialSecurityContributionLines() is inserted — one
+     * SocialSecurityContribution + one paired PayrollEntryLine per (concept
+     * × affiliation sub-range), `concept_id` on the line always the generic
+     * SOCIAL_SECURITY payroll-catalog concept, `amount` always the
+     * sub-range's `employee_amount`. `employer_amount` is stored only on
+     * SocialSecurityContribution — it is employer cost, not an employee-
+     * facing payroll line, so it never produces a payroll_entry_line of its
+     * own.
      *
-     * If any of the six documented exceptions is thrown — whether from the
+     * If any of the seven documented exceptions is thrown — whether from the
      * pre-transaction computation above, or (defensively) from inside the
      * transaction itself — this method persists a status='blocked'
      * PayrollEntry (contract_id=null, all totals 0, zero lines) and
@@ -959,6 +988,7 @@ class PayrollCalculationService
      * @throws AmbiguousLaborRuleVersionException
      * @throws MissingLaborRuleParameterException
      * @throws NoAttendanceOrNoveltyDataException
+     * @throws NoActiveSocialSecurityAffiliationException
      */
     public function calculateForEmployee(PayrollPeriod $period, Employee $employee): PayrollEntry
     {
@@ -975,9 +1005,16 @@ class PayrollCalculationService
 
             $baseSalaryConceptId = $this->resolveConceptId($employee->company_id, 'BASE_SALARY');
             $overtimeConceptId = $this->resolveConceptId($employee->company_id, 'OVERTIME');
+            $socialSecurityConceptId = $this->resolveConceptId($employee->company_id, 'SOCIAL_SECURITY');
+
+            $earningLines = $baseSalary['lines']
+                ->map(fn (array $line): array => ['concept_id' => $baseSalaryConceptId, 'amount' => $line['amount']])
+                ->concat($overtimeLines->map(fn (array $line): array => ['concept_id' => $overtimeConceptId, 'amount' => $line['amount']]));
+
+            $socialSecurityLines = $this->socialSecurityContributionLines($employee, $period, $earningLines);
 
             $grossTotal = $baseSalary['lines']->sum('amount') + $overtimeLines->sum('amount');
-            $deductionsTotal = $deductionLines->sum('amount');
+            $deductionsTotal = $deductionLines->sum('amount') + $socialSecurityLines->sum('employee_amount');
             $netTotal = $grossTotal - $deductionsTotal;
 
             return DB::transaction(function () use (
@@ -988,6 +1025,8 @@ class PayrollCalculationService
                 $deductionLines,
                 $baseSalaryConceptId,
                 $overtimeConceptId,
+                $socialSecurityConceptId,
+                $socialSecurityLines,
                 $grossTotal,
                 $deductionsTotal,
                 $netTotal,
@@ -1005,6 +1044,12 @@ class PayrollCalculationService
                 );
 
                 $entry->lines()->delete();
+
+                // Only reachable now that this entry's lines are gone —
+                // payroll_entry_lines.social_security_contribution_id is
+                // restrictOnDelete, so a previous calculation's contribution
+                // rows could not be removed before their paired lines were.
+                SocialSecurityContribution::query()->where('payroll_entry_id', $entry->id)->delete();
 
                 foreach ($baseSalary['lines'] as $line) {
                     $entry->lines()->create([
@@ -1047,9 +1092,38 @@ class PayrollCalculationService
                     ]);
                 }
 
+                foreach ($socialSecurityLines as $line) {
+                    $contribution = SocialSecurityContribution::create([
+                        'company_id' => $employee->company_id,
+                        'payroll_entry_id' => $entry->id,
+                        'entity_id' => $line['entity']->id,
+                        'concept_id' => $line['concept']->id,
+                        'period_from' => $line['period_from'],
+                        'period_to' => $line['period_to'],
+                        'base_amount' => $line['base_amount'],
+                        'employee_amount' => $line['employee_amount'],
+                        'employer_amount' => $line['employer_amount'],
+                    ]);
+
+                    // employer_amount deliberately produces NO line here —
+                    // it is employer cost, not an employee-facing deduction;
+                    // it stays traceable solely via the SocialSecurityContribution
+                    // row just created above.
+                    $entry->lines()->create([
+                        'company_id' => $employee->company_id,
+                        'concept_id' => $socialSecurityConceptId,
+                        'contract_id' => null,
+                        'social_security_contribution_id' => $contribution->id,
+                        'type' => 'deduction',
+                        'quantity' => null,
+                        'rate' => null,
+                        'amount' => $line['employee_amount'],
+                    ]);
+                }
+
                 return $entry;
             });
-        } catch (AmbiguousContractException|AmbiguousSalaryHistoryException|NoActiveLaborRuleVersionException|AmbiguousLaborRuleVersionException|MissingLaborRuleParameterException|NoAttendanceOrNoveltyDataException $e) {
+        } catch (AmbiguousContractException|AmbiguousSalaryHistoryException|NoActiveLaborRuleVersionException|AmbiguousLaborRuleVersionException|MissingLaborRuleParameterException|NoAttendanceOrNoveltyDataException|NoActiveSocialSecurityAffiliationException $e) {
             $this->persistBlockedEntry($period, $employee);
 
             throw $e;
@@ -1161,7 +1235,7 @@ class PayrollCalculationService
                     'entry' => $entry,
                     'error' => null,
                 ]);
-            } catch (AmbiguousContractException|AmbiguousSalaryHistoryException|NoActiveLaborRuleVersionException|AmbiguousLaborRuleVersionException|MissingLaborRuleParameterException|NoAttendanceOrNoveltyDataException $e) {
+            } catch (AmbiguousContractException|AmbiguousSalaryHistoryException|NoActiveLaborRuleVersionException|AmbiguousLaborRuleVersionException|MissingLaborRuleParameterException|NoAttendanceOrNoveltyDataException|NoActiveSocialSecurityAffiliationException $e) {
                 $blockedEntry = PayrollEntry::query()
                     ->where('payroll_period_id', $period->id)
                     ->where('employee_id', $employee->id)

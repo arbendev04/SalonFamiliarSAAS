@@ -25,6 +25,7 @@ use App\Models\SalaryHistory;
 use App\Models\Shift;
 use App\Models\SocialSecurityAffiliation;
 use App\Models\SocialSecurityConceptDefinition;
+use App\Models\SocialSecurityContribution;
 use App\Models\SocialSecurityEntity;
 use App\Services\Payroll\PayrollCalculationService;
 use App\Services\Tenancy\CurrentCompany;
@@ -855,6 +856,11 @@ class PayrollCalculationServiceTest extends TestCase
         return PayrollConceptDefinition::query()->withoutGlobalScope('company')->whereNull('company_id')->where('code', 'OVERTIME')->firstOrFail()->id;
     }
 
+    private function socialSecurityConceptId(): string
+    {
+        return PayrollConceptDefinition::query()->withoutGlobalScope('company')->whereNull('company_id')->where('code', 'SOCIAL_SECURITY')->firstOrFail()->id;
+    }
+
     public function test_calculate_for_employee_produces_a_calculated_entry_with_a_single_base_salary_line_for_the_happy_path()
     {
         $this->seed(PayrollConceptCatalogSeeder::class);
@@ -1432,5 +1438,342 @@ class PayrollCalculationServiceTest extends TestCase
         $this->assertEqualsWithDelta(0.0, $line['base_amount'], 0.0001);
         $this->assertEqualsWithDelta(0.0, $line['employee_amount'], 0.0001);
         $this->assertEqualsWithDelta(0.0, $line['employer_amount'], 0.0001);
+    }
+
+    /**
+     * Commit 15's core integration test: a properly affiliated and rated
+     * social-security concept must produce exactly one SocialSecurityContribution
+     * row (payroll_entry_id/entity_id/concept_id/base_amount/employee_amount/
+     * employer_amount all correct) and exactly one paired PayrollEntryLine
+     * (amount = employee_amount, social_security_contribution_id set), with
+     * employer_amount never surfacing as its own line, and the entry's
+     * totals correctly folding in the new deduction.
+     */
+    public function test_calculate_for_employee_with_one_social_security_concept_persists_one_contribution_and_one_paired_deduction_line()
+    {
+        $this->seed(PayrollConceptCatalogSeeder::class);
+
+        $period = $this->period('2026-04-01', '2026-04-30');
+        $this->contract('2025-01-01', null, 3000000);
+        AttendanceRecord::factory()->create([
+            'company_id' => $this->company->id,
+            'employee_id' => $this->employee->id,
+            'date' => '2026-04-05',
+        ]);
+
+        $concept = $this->socialSecurityConcept('CATEGORY_A');
+        $affiliation = $this->affiliation('CATEGORY_A', '2024-06-01', null);
+        $this->socialSecurityRuleVersion($concept, [
+            'employee_pct' => 0.10,
+            'employer_pct' => 0.20,
+            'base_concept_codes' => ['BASE_SALARY'],
+        ]);
+
+        $entry = $this->service->calculateForEmployee($period, $this->employee);
+
+        // Base salary over the full month = 3,000,000 exactly (gross).
+        // Social security base = 3,000,000 (whole period, single sub-range).
+        // employee_amount = 300,000; employer_amount = 600,000.
+        $this->assertEqualsWithDelta(3000000.0, (float) $entry->gross_total, 0.01);
+        $this->assertEqualsWithDelta(300000.0, (float) $entry->deductions_total, 0.01);
+        $this->assertEqualsWithDelta(2700000.0, (float) $entry->net_total, 0.01);
+
+        $contributions = SocialSecurityContribution::query()->where('payroll_entry_id', $entry->id)->get();
+        $this->assertCount(1, $contributions);
+
+        $contribution = $contributions->first();
+        $this->assertSame($entry->id, $contribution->payroll_entry_id);
+        $this->assertSame($affiliation->entity_id, $contribution->entity_id);
+        $this->assertSame($concept->id, $contribution->concept_id);
+        $this->assertEqualsWithDelta(3000000.0, (float) $contribution->base_amount, 0.01);
+        $this->assertEqualsWithDelta(300000.0, (float) $contribution->employee_amount, 0.01);
+        $this->assertEqualsWithDelta(600000.0, (float) $contribution->employer_amount, 0.01);
+
+        $socialSecurityLines = $entry->lines()->whereNotNull('social_security_contribution_id')->get();
+        $this->assertCount(1, $socialSecurityLines);
+
+        $line = $socialSecurityLines->first();
+        $this->assertSame($contribution->id, $line->social_security_contribution_id);
+        $this->assertSame($this->socialSecurityConceptId(), $line->concept_id);
+        $this->assertSame('deduction', $line->type);
+        $this->assertEqualsWithDelta(300000.0, (float) $line->amount, 0.01);
+
+        // employer_amount (600,000) never appears as an amount on any line —
+        // it is only traceable via the SocialSecurityContribution row above.
+        $allLines = $entry->lines()->get();
+        $this->assertFalse($allLines->contains(fn (PayrollEntryLine $l): bool => abs((float) $l->amount - 600000.0) < 0.01));
+        $this->assertCount(2, $allLines);
+    }
+
+    /**
+     * Plan step 16's scenario: an employee whose SocialSecurityAffiliation
+     * for one concept changes entity mid-period must produce TWO
+     * SocialSecurityContribution rows (distinct entity_id, correctly clipped
+     * period_from/period_to) and TWO paired PayrollEntryLine rows, whose
+     * employee_amounts correctly sum into the entry's totals.
+     */
+    public function test_calculate_for_employee_with_a_mid_period_affiliation_change_persists_two_contributions_and_two_paired_lines()
+    {
+        $this->seed(PayrollConceptCatalogSeeder::class);
+
+        // April has 30 calendar days; splitting 15/15 keeps the money clean.
+        $period = $this->period('2026-04-01', '2026-04-30');
+        $this->contract('2025-01-01', null, 3000000);
+        AttendanceRecord::factory()->create([
+            'company_id' => $this->company->id,
+            'employee_id' => $this->employee->id,
+            'date' => '2026-04-05',
+        ]);
+
+        $concept = $this->socialSecurityConcept('CATEGORY_A');
+        $before = $this->affiliation('CATEGORY_A', '2024-06-01', '2026-04-15');
+        $after = $this->affiliation('CATEGORY_A', '2026-04-16', null);
+        $this->socialSecurityRuleVersion($concept, [
+            'employee_pct' => 0.10,
+            'employer_pct' => 0.20,
+            'base_concept_codes' => ['BASE_SALARY'],
+        ]);
+
+        $entry = $this->service->calculateForEmployee($period, $this->employee);
+
+        $contributions = SocialSecurityContribution::query()
+            ->where('payroll_entry_id', $entry->id)
+            ->orderBy('period_from')
+            ->get();
+        $this->assertCount(2, $contributions);
+
+        // 3,000,000 * 15/30 = 1,500,000 for each sub-range.
+        $first = $contributions->first();
+        $this->assertSame($before->entity_id, $first->entity_id);
+        $this->assertEqualsWithDelta(1500000.0, (float) $first->base_amount, 0.01);
+        $this->assertEqualsWithDelta(150000.0, (float) $first->employee_amount, 0.01);
+        $this->assertEqualsWithDelta(300000.0, (float) $first->employer_amount, 0.01);
+        $this->assertTrue(Carbon::parse($first->period_from)->equalTo(Carbon::parse('2026-04-01')));
+        $this->assertTrue(Carbon::parse($first->period_to)->equalTo(Carbon::parse('2026-04-15')));
+
+        $second = $contributions->last();
+        $this->assertSame($after->entity_id, $second->entity_id);
+        $this->assertEqualsWithDelta(1500000.0, (float) $second->base_amount, 0.01);
+        $this->assertEqualsWithDelta(150000.0, (float) $second->employee_amount, 0.01);
+        $this->assertEqualsWithDelta(300000.0, (float) $second->employer_amount, 0.01);
+        $this->assertTrue(Carbon::parse($second->period_from)->equalTo(Carbon::parse('2026-04-16')));
+        $this->assertTrue(Carbon::parse($second->period_to)->equalTo(Carbon::parse('2026-04-30')));
+
+        $lines = $entry->lines()->whereNotNull('social_security_contribution_id')->get();
+        $this->assertCount(2, $lines);
+        $this->assertEqualsCanonicalizing(
+            $contributions->pluck('id')->all(),
+            $lines->pluck('social_security_contribution_id')->all(),
+        );
+        $this->assertTrue($lines->every(fn (PayrollEntryLine $l): bool => abs((float) $l->amount - 150000.0) < 0.01));
+
+        // Both sub-ranges' employee_amount fold into the entry totals.
+        $this->assertEqualsWithDelta(300000.0, (float) $entry->deductions_total, 0.01);
+        $this->assertEqualsWithDelta(2700000.0, (float) $entry->net_total, 0.01);
+    }
+
+    /**
+     * Regression: a company with zero SocialSecurityConceptDefinition rows
+     * configured still calculates payroll normally — no contribution rows,
+     * no extra lines, no crash. Not every company uses this feature yet.
+     */
+    public function test_calculate_for_employee_with_zero_social_security_concepts_configured_is_completely_unaffected()
+    {
+        $this->seed(PayrollConceptCatalogSeeder::class);
+
+        $period = $this->period('2026-04-01', '2026-04-30');
+        $this->contract('2025-01-01', null, 3000000);
+        AttendanceRecord::factory()->create([
+            'company_id' => $this->company->id,
+            'employee_id' => $this->employee->id,
+            'date' => '2026-04-05',
+        ]);
+
+        $entry = $this->service->calculateForEmployee($period, $this->employee);
+
+        $this->assertEqualsWithDelta(3000000.0, (float) $entry->gross_total, 0.01);
+        $this->assertEqualsWithDelta(0.0, (float) $entry->deductions_total, 0.0001);
+        $this->assertEqualsWithDelta(3000000.0, (float) $entry->net_total, 0.01);
+        $this->assertCount(0, SocialSecurityContribution::query()->where('payroll_entry_id', $entry->id)->get());
+        $this->assertCount(1, $entry->lines()->get());
+    }
+
+    /**
+     * A concept with an affiliation but no LaborRuleVersion covering the
+     * date (NoActiveLaborRuleVersionException) blocks this employee's whole
+     * calculation via the same persistBlockedEntry() mechanism as every
+     * other documented exception — no partial entry, no contribution rows.
+     */
+    public function test_calculate_for_employee_is_blocked_when_a_social_security_concept_has_an_affiliation_but_no_active_rate_version()
+    {
+        $this->seed(PayrollConceptCatalogSeeder::class);
+
+        $period = $this->period('2026-04-01', '2026-04-30');
+        $this->contract('2025-01-01', null, 3000000);
+        AttendanceRecord::factory()->create([
+            'company_id' => $this->company->id,
+            'employee_id' => $this->employee->id,
+            'date' => '2026-04-05',
+        ]);
+
+        $concept = $this->socialSecurityConcept('CATEGORY_A');
+        $this->affiliation('CATEGORY_A', '2024-06-01', null);
+        // LaborRule row exists (rate configuration was started) but no
+        // LaborRuleVersion was ever added.
+        $this->socialSecurityLaborRule($concept);
+
+        try {
+            $this->service->calculateForEmployee($period, $this->employee);
+            $this->fail('Expected NoActiveLaborRuleVersionException to be thrown.');
+        } catch (NoActiveLaborRuleVersionException $exception) {
+            // expected
+        }
+
+        $entry = PayrollEntry::query()
+            ->where('payroll_period_id', $period->id)
+            ->where('employee_id', $this->employee->id)
+            ->firstOrFail();
+
+        $this->assertSame('blocked', $entry->status);
+        $this->assertNull($entry->contract_id);
+        $this->assertEqualsWithDelta(0.0, (float) $entry->gross_total, 0.0001);
+        $this->assertEqualsWithDelta(0.0, (float) $entry->deductions_total, 0.0001);
+        $this->assertCount(0, $entry->lines()->get());
+        $this->assertCount(0, SocialSecurityContribution::query()->where('payroll_entry_id', $entry->id)->get());
+    }
+
+    /**
+     * Batch isolation for the same rate-gap failure mode: one employee
+     * blocked by NoActiveLaborRuleVersionException never aborts the rest of
+     * calculateForPeriod()'s batch — the unaffiliated employee calculates
+     * normally in the same run.
+     */
+    public function test_calculate_for_period_blocks_only_the_employee_with_an_unresolved_social_security_rate_gap()
+    {
+        $this->seed(PayrollConceptCatalogSeeder::class);
+
+        $period = $this->period('2026-04-01', '2026-04-30');
+
+        // setUp's $this->employee: affiliated to CATEGORY_A but the rate
+        // LaborRule has no version -> blocked.
+        $this->contract('2025-01-01', null, 3000000);
+        AttendanceRecord::factory()->create([
+            'company_id' => $this->company->id,
+            'employee_id' => $this->employee->id,
+            'date' => '2026-04-05',
+        ]);
+        $concept = $this->socialSecurityConcept('CATEGORY_A');
+        $this->affiliation('CATEGORY_A', '2024-06-01', null);
+        $this->socialSecurityLaborRule($concept);
+
+        // A second employee in the same company, never affiliated to
+        // CATEGORY_A at all -> the concept is skipped cleanly for them.
+        $okEmployee = Employee::factory()->create(['company_id' => $this->company->id]);
+        EmploymentContract::factory()->create([
+            'company_id' => $this->company->id,
+            'employee_id' => $okEmployee->id,
+            'start_date' => '2025-01-01',
+            'end_date' => null,
+            'base_salary' => 2500000,
+        ]);
+        AttendanceRecord::factory()->create([
+            'company_id' => $this->company->id,
+            'employee_id' => $okEmployee->id,
+            'date' => '2026-04-05',
+        ]);
+
+        $results = $this->service->calculateForPeriod($period);
+
+        $this->assertCount(2, $results);
+
+        $blockedResult = $results->firstWhere('employee_id', $this->employee->id);
+        $this->assertNotNull($blockedResult);
+        $this->assertSame('blocked', $blockedResult['status']);
+        $this->assertNotNull($blockedResult['error']);
+
+        $okResult = $results->firstWhere('employee_id', $okEmployee->id);
+        $this->assertNotNull($okResult);
+        $this->assertSame('ok', $okResult['status']);
+        $this->assertNull($okResult['error']);
+        $this->assertEqualsWithDelta(2500000.0, (float) $okResult['entry']->gross_total, 0.01);
+
+        $this->assertSame('blocked', PayrollEntry::query()
+            ->where('payroll_period_id', $period->id)
+            ->where('employee_id', $this->employee->id)
+            ->firstOrFail()->status);
+        $this->assertSame('calculated', PayrollEntry::query()
+            ->where('payroll_period_id', $period->id)
+            ->where('employee_id', $okEmployee->id)
+            ->firstOrFail()->status);
+    }
+
+    /**
+     * Plan step 17's literal scenario: a gap between two affiliation
+     * sub-ranges mid-period (NoActiveSocialSecurityAffiliationException,
+     * distinct from "zero affiliations at all", which is never an error)
+     * blocks only that one employee in calculateForPeriod()'s batch.
+     */
+    public function test_calculate_for_period_blocks_only_the_employee_with_a_social_security_affiliation_gap()
+    {
+        $this->seed(PayrollConceptCatalogSeeder::class);
+
+        $period = $this->period('2026-04-01', '2026-04-30');
+
+        // setUp's $this->employee: a genuine gap between two CATEGORY_A
+        // affiliation sub-ranges (04-11 through 04-19 uncovered).
+        $this->contract('2025-01-01', null, 3000000);
+        AttendanceRecord::factory()->create([
+            'company_id' => $this->company->id,
+            'employee_id' => $this->employee->id,
+            'date' => '2026-04-05',
+        ]);
+        $concept = $this->socialSecurityConcept('CATEGORY_A');
+        $this->socialSecurityRuleVersion($concept, [
+            'employee_pct' => 0.10,
+            'employer_pct' => 0.20,
+            'base_concept_codes' => ['BASE_SALARY'],
+        ]);
+        $this->affiliation('CATEGORY_A', '2024-06-01', '2026-04-10');
+        $this->affiliation('CATEGORY_A', '2026-04-20', null);
+
+        // A second employee, same company, with zero CATEGORY_A affiliations
+        // at all -> skipped cleanly, calculates normally.
+        $okEmployee = Employee::factory()->create(['company_id' => $this->company->id]);
+        EmploymentContract::factory()->create([
+            'company_id' => $this->company->id,
+            'employee_id' => $okEmployee->id,
+            'start_date' => '2025-01-01',
+            'end_date' => null,
+            'base_salary' => 2500000,
+        ]);
+        AttendanceRecord::factory()->create([
+            'company_id' => $this->company->id,
+            'employee_id' => $okEmployee->id,
+            'date' => '2026-04-05',
+        ]);
+
+        $results = $this->service->calculateForPeriod($period);
+
+        $this->assertCount(2, $results);
+
+        $blockedResult = $results->firstWhere('employee_id', $this->employee->id);
+        $this->assertNotNull($blockedResult);
+        $this->assertSame('blocked', $blockedResult['status']);
+        $this->assertNotNull($blockedResult['error']);
+
+        $okResult = $results->firstWhere('employee_id', $okEmployee->id);
+        $this->assertNotNull($okResult);
+        $this->assertSame('ok', $okResult['status']);
+        $this->assertNull($okResult['error']);
+        $this->assertEqualsWithDelta(2500000.0, (float) $okResult['entry']->gross_total, 0.01);
+
+        $this->assertSame('blocked', PayrollEntry::query()
+            ->where('payroll_period_id', $period->id)
+            ->where('employee_id', $this->employee->id)
+            ->firstOrFail()->status);
+        $this->assertSame('calculated', PayrollEntry::query()
+            ->where('payroll_period_id', $period->id)
+            ->where('employee_id', $okEmployee->id)
+            ->firstOrFail()->status);
     }
 }
