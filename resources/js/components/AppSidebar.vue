@@ -8,6 +8,7 @@ import {
     LayoutGrid,
     PartyPopper,
     Scale,
+    ShieldPlus,
     Users,
     Wallet,
 } from '@lucide/vue';
@@ -32,6 +33,8 @@ import { index as laborRulesIndex } from '@/routes/labor-rules';
 import { index as payrollPeriodsIndex } from '@/routes/payroll/periods';
 import { index as positionsIndex } from '@/routes/positions';
 import { index as schedulesIndex } from '@/routes/schedules';
+import { index as socialSecurityConceptDefinitionsIndex } from '@/routes/social-security/concept-definitions';
+import { index as socialSecurityEntitiesIndex } from '@/routes/social-security/entities';
 import type { NavItem } from '@/types';
 
 const mainNavItems: NavItem[] = [
@@ -74,6 +77,16 @@ const mainNavItems: NavItem[] = [
         title: 'Nómina',
         href: payrollPeriodsIndex(),
         icon: Wallet,
+    },
+    {
+        title: 'Entidades de seguridad social',
+        href: socialSecurityEntitiesIndex(),
+        icon: ShieldPlus,
+    },
+    {
+        title: 'Conceptos de seguridad social',
+        href: socialSecurityConceptDefinitionsIndex(),
+        icon: ShieldPlus,
     },
 ];
 

@@ -19,6 +19,8 @@ use App\Http\Controllers\PositionController;
 use App\Http\Controllers\ShiftAssignmentController;
 use App\Http\Controllers\ShiftBreakController;
 use App\Http\Controllers\ShiftController;
+use App\Http\Controllers\SocialSecurityConceptDefinitionController;
+use App\Http\Controllers\SocialSecurityEntityController;
 use App\Http\Controllers\WorkScheduleTemplateController;
 use Illuminate\Support\Facades\Route;
 
@@ -92,6 +94,16 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
     Route::get('employees/{employee}/deduction-plans', [PayrollDeductionPlanController::class, 'index'])->name('employees.deduction-plans.index');
     Route::post('employees/{employee}/deduction-plans', [PayrollDeductionPlanController::class, 'store'])->name('employees.deduction-plans.store');
+
+    Route::get('social-security/entities', [SocialSecurityEntityController::class, 'index'])->name('social-security.entities.index');
+    Route::post('social-security/entities', [SocialSecurityEntityController::class, 'store'])->name('social-security.entities.store');
+    Route::put('social-security/entities/{entity}', [SocialSecurityEntityController::class, 'update'])->name('social-security.entities.update');
+    Route::delete('social-security/entities/{entity}', [SocialSecurityEntityController::class, 'destroy'])->name('social-security.entities.destroy');
+
+    Route::get('social-security/concept-definitions', [SocialSecurityConceptDefinitionController::class, 'index'])->name('social-security.concept-definitions.index');
+    Route::post('social-security/concept-definitions', [SocialSecurityConceptDefinitionController::class, 'store'])->name('social-security.concept-definitions.store');
+    Route::put('social-security/concept-definitions/{concept}', [SocialSecurityConceptDefinitionController::class, 'update'])->name('social-security.concept-definitions.update');
+    Route::delete('social-security/concept-definitions/{concept}', [SocialSecurityConceptDefinitionController::class, 'destroy'])->name('social-security.concept-definitions.destroy');
 });
 
 require __DIR__.'/settings.php';
