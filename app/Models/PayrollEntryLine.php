@@ -32,6 +32,7 @@ class PayrollEntryLine extends Model
         'payroll_entry_id',
         'concept_id',
         'contract_id',
+        'deduction_plan_id',
         'type',
         'quantity',
         'rate',
@@ -72,5 +73,19 @@ class PayrollEntryLine extends Model
     public function contract(): BelongsTo
     {
         return $this->belongsTo(EmploymentContract::class, 'contract_id');
+    }
+
+    /**
+     * Only populated for a deduction line sourced from a
+     * PayrollDeductionPlan (see App\Services\Payroll\PayrollCalculationService
+     * ::fixedDeductionLines()); this is what lets
+     * App\Services\Payroll\PayrollPeriodService::close() find exactly which
+     * plan's `remaining` to decrement for a given period.
+     *
+     * @return BelongsTo<PayrollDeductionPlan, $this>
+     */
+    public function deductionPlan(): BelongsTo
+    {
+        return $this->belongsTo(PayrollDeductionPlan::class, 'deduction_plan_id');
     }
 }

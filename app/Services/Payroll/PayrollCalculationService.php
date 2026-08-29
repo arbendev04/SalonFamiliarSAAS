@@ -658,6 +658,11 @@ class PayrollCalculationService
                         'company_id' => $employee->company_id,
                         'concept_id' => $line['concept_id'],
                         'contract_id' => null,
+                        // Carries fixedDeductionLines()'s plan_id through to
+                        // persistence so PayrollPeriodService::close() can
+                        // trace this line back to the PayrollDeductionPlan
+                        // whose `remaining` it must decrement.
+                        'deduction_plan_id' => $line['plan_id'],
                         'type' => 'deduction',
                         'quantity' => $line['quantity'],
                         'rate' => $line['rate'],
