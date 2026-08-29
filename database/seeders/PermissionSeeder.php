@@ -22,8 +22,8 @@ class PermissionSeeder extends Seeder
         'contracts' => ['contracts.read', 'contracts.write'],
         'schedules' => ['schedules.write'],
         'attendance' => ['attendance.read', 'attendance.record', 'attendance.adjust', 'attendance.approve_adjustment'],
-        'overtime' => ['overtime.request', 'overtime.authorize'],
-        'leave' => ['leave.approve'],
+        'overtime' => ['overtime.request', 'overtime.authorize', 'overtime.mark_paid'],
+        'leave' => ['leave.approve', 'leave.create'],
         'payroll' => [
             'payroll.read',
             'payroll.calculate',
@@ -40,6 +40,7 @@ class PermissionSeeder extends Seeder
         'settings' => ['settings.manage'],
         'labor_rules' => ['labor_rules.read', 'labor_rules.write'],
         'time_calculation' => ['time_calculation.read', 'time_calculation.calculate'],
+        'holidays' => ['holidays.read', 'holidays.write'],
     ];
 
     public function run(): void
