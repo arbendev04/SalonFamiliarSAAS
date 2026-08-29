@@ -3,14 +3,21 @@
 namespace App\Services\Payroll;
 
 use App\Exceptions\AmbiguousContractException;
+use App\Exceptions\AmbiguousLaborRuleVersionException;
 use App\Exceptions\AmbiguousSalaryHistoryException;
+use App\Exceptions\MissingLaborRuleParameterException;
+use App\Exceptions\NoActiveLaborRuleVersionException;
 use App\Exceptions\NoAttendanceOrNoveltyDataException;
 use App\Models\AttendanceRecord;
 use App\Models\Employee;
 use App\Models\EmploymentContract;
+use App\Models\LaborRule;
+use App\Models\LaborRuleVersion;
 use App\Models\NoveltyRecord;
+use App\Models\OvertimeRecord;
 use App\Models\PayrollPeriod;
 use App\Models\SalaryHistory;
+use App\Services\TimeCalculation\TimeCalculationEngine;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Collection;
 
@@ -22,8 +29,9 @@ use Illuminate\Support\Collection;
  * calculateForPeriod() (commit 10) will own the DB::transaction() /
  * PayrollEntry::updateOrCreate() wiring on top of the pure math built here.
  *
- * This commit only builds the contract sub-range resolution and base-salary
- * proration piece (plan section D/G) — no overtime, no deductions, nothing
+ * This commit adds the authorized-overtime-to-money translation (plan
+ * section D, "Horas extra") on top of commits 6-7's contract sub-range
+ * resolution and base-salary proration — no deductions yet, nothing
  * persisted to payroll_entries/payroll_entry_lines yet.
  */
 class PayrollCalculationService
@@ -177,9 +185,29 @@ class PayrollCalculationService
     }
 
     /**
-     * Resolves the monthly salary in force for $contract at $from —
+     * Resolves the monthly salary in force for $contract at $date —
      * SalaryHistory::activeAt() if a revision covers that date, else the
-     * contract's own base_salary — and converts it to a calendar-day rate.
+     * contract's own base_salary. Extracted out of resolveDailyRate() (and
+     * reused by authorizedOvertimeLines()) so this SalaryHistory::
+     * activeAt() + contract-fallback lookup — the actual "which salary
+     * applies" decision — is not duplicated between the two money-derivation
+     * paths that both need it: resolveDailyRate() further divides it into a
+     * calendar-day rate, authorizedOvertimeLines() divides it into an hourly
+     * rate instead.
+     *
+     * @throws AmbiguousSalaryHistoryException
+     */
+    protected function resolveMonthlySalary(EmploymentContract $contract, CarbonInterface $date): float
+    {
+        $revision = SalaryHistory::activeAt($contract->id, $date);
+
+        return $revision !== null
+            ? (float) $revision->base_salary
+            : (float) $contract->base_salary;
+    }
+
+    /**
+     * Converts resolveMonthlySalary() into a calendar-day rate.
      *
      * Two provisional product decisions, both documented (never silently
      * assumed, per project rule #16) and still open as PENDING DECISION in
@@ -203,13 +231,7 @@ class PayrollCalculationService
      */
     protected function resolveDailyRate(EmploymentContract $contract, CarbonInterface $from): float
     {
-        $revision = SalaryHistory::activeAt($contract->id, $from);
-
-        $monthlySalary = $revision !== null
-            ? (float) $revision->base_salary
-            : (float) $contract->base_salary;
-
-        return $monthlySalary / $from->daysInMonth;
+        return $this->resolveMonthlySalary($contract, $from) / $from->daysInMonth;
     }
 
     /**
@@ -259,5 +281,192 @@ class PayrollCalculationService
             'lines' => $lines,
             'last_contract' => $subRanges->last()['contract'],
         ];
+    }
+
+    /**
+     * Translates AUTHORIZED overtime into OVERTIME payroll_entry_lines data,
+     * per .ai/10-PAYROLL.md plan section D ("Horas extra"). Only
+     * `overtime_records.status = 'authorized'` counts — `detected`,
+     * `requested`, and `rejected` are all excluded, since only a human
+     * approval turns a detected overtime candidate into money (the same
+     * status this codebase already treats as the money-relevant one in
+     * App\Services\Overtime\OvertimeRecordService's lifecycle).
+     * `overtime_records` has no date column of its own; membership in the
+     * period is decided by its related `shifts.date` falling inside
+     * [period.start_date, period.end_date].
+     *
+     * Zero authorized overtime records for the period is a completely
+     * normal outcome — an empty Collection, never an error — unlike
+     * assertHasAttendanceOrNoveltyCoverage()'s guard, which blocks the whole
+     * employee when attendance/novelty coverage is silent. Having no
+     * overtime approved for a period says nothing about whether the
+     * employee's base salary/attendance data is present.
+     *
+     * For each authorized OvertimeRecord, resolves the active
+     * labor_rule_version for the employee's company on the record's shift
+     * date, using the exact same rule_type=STANDARD_WORKWEEK lookup and
+     * blocking behavior (NoActiveLaborRuleVersionException /
+     * AmbiguousLaborRuleVersionException) as
+     * TimeCalculationEngine::resolveActiveRuleVersion() — matched rather
+     * than reinvented, per the Fase 7 precedent this method is required to
+     * follow. Resolved at most once per unique shift date (multiple
+     * overtime records commonly share a date) as a small optimization, not
+     * a correctness requirement.
+     *
+     * Requires `monthly_hours_divisor` and `overtime_surcharge_pct` in that
+     * version's `parameters`, blocking via MissingLaborRuleParameterException
+     * when either is absent — the same established contract
+     * TimeCalculationEngine::resolveParameters() uses for
+     * tolerance_minutes/rounding_minutes.
+     *
+     * Formula (an ENGINEERING interpretation of what "surcharge percentage"
+     * conventionally means in payroll systems — only the FORMULA SHAPE is
+     * asserted here, never a legally-validated Colombian percentage; the
+     * value itself always comes from labor_rule_versions.parameters, never
+     * hardcoded, per project rule #15):
+     *   hourly_rate    = monthly_salary / monthly_hours_divisor
+     *   overtime_rate  = hourly_rate * (1 + overtime_surcharge_pct)
+     *   amount         = overtime_rate * (authorized_minutes / 60)
+     * i.e. overtime_surcharge_pct = 0.25 pays overtime hours at 125% of the
+     * normal hourly rate ("recargo del 25%" ADDITIVE on top of the base
+     * rate, the conventional Colombian payroll reading), not as an absolute
+     * 25% rate.
+     *
+     * Deviates from the plan sketch's exact visibility — declared here as
+     * `protected`, not `private` — to stay consistent with every other
+     * testable computational helper already in this class
+     * (resolveContractSubRanges()/resolveDailyRate()/
+     * proratedBaseSalaryLines()/assertHasAttendanceOrNoveltyCoverage() are
+     * all `protected` for exactly this reason): a `private` method here
+     * would not be reachable from the anonymous-subclass test wrapper this
+     * file's tests use, since PHP does not allow a subclass to call a
+     * parent's private method even via inherited scope.
+     *
+     * @return Collection<int, array{concept_code: string, quantity: float, rate: float, amount: float}>
+     *
+     * @throws NoActiveLaborRuleVersionException
+     * @throws AmbiguousLaborRuleVersionException
+     * @throws MissingLaborRuleParameterException
+     * @throws AmbiguousSalaryHistoryException
+     * @throws AmbiguousContractException
+     */
+    protected function authorizedOvertimeLines(Employee $employee, PayrollPeriod $period): Collection
+    {
+        $overtimeRecords = OvertimeRecord::query()
+            ->where('employee_id', $employee->id)
+            ->where('status', 'authorized')
+            ->whereHas('shift', function ($query) use ($period) {
+                $query->whereBetween('date', [$period->start_date->toDateString(), $period->end_date->toDateString()]);
+            })
+            ->with('shift')
+            ->get();
+
+        if ($overtimeRecords->isEmpty()) {
+            return collect();
+        }
+
+        /** @var array<string, LaborRuleVersion> $ruleVersionsByDate */
+        $ruleVersionsByDate = [];
+
+        return $overtimeRecords->map(function (OvertimeRecord $overtimeRecord) use ($employee, &$ruleVersionsByDate): array {
+            $shiftDate = $overtimeRecord->shift->date;
+            $dateKey = $shiftDate->toDateString();
+
+            if (! array_key_exists($dateKey, $ruleVersionsByDate)) {
+                $ruleVersionsByDate[$dateKey] = $this->resolveActiveLaborRuleVersion($employee, $shiftDate);
+            }
+
+            [$monthlyHoursDivisor, $overtimeSurchargePct] = $this->requireOvertimeParameters($ruleVersionsByDate[$dateKey]);
+
+            $contract = $this->resolveContractForOvertime($employee, $shiftDate);
+            $monthlySalary = $this->resolveMonthlySalary($contract, $shiftDate);
+
+            $hourlyRate = $monthlySalary / $monthlyHoursDivisor;
+            $overtimeRate = $hourlyRate * (1 + $overtimeSurchargePct);
+            $overtimeHours = $overtimeRecord->authorized_minutes / 60;
+
+            return [
+                'concept_code' => 'OVERTIME',
+                'quantity' => $overtimeHours,
+                'rate' => $overtimeRate,
+                'amount' => $overtimeRate * $overtimeHours,
+            ];
+        })->values();
+    }
+
+    /**
+     * Same rule_type=STANDARD_WORKWEEK lookup and blocking behavior as
+     * TimeCalculationEngine::resolveActiveRuleVersion() — reuses that
+     * class's public RULE_TYPE_STANDARD_WORKWEEK constant rather than
+     * duplicating the literal string, so both engines stay pointed at the
+     * exact same labor_rules row shape if it's ever renamed.
+     *
+     * @throws AmbiguousLaborRuleVersionException
+     * @throws NoActiveLaborRuleVersionException
+     */
+    private function resolveActiveLaborRuleVersion(Employee $employee, CarbonInterface $date): LaborRuleVersion
+    {
+        $laborRule = LaborRule::query()
+            ->where('company_id', $employee->company_id)
+            ->where('rule_type', TimeCalculationEngine::RULE_TYPE_STANDARD_WORKWEEK)
+            ->first();
+
+        if ($laborRule === null) {
+            throw new NoActiveLaborRuleVersionException(TimeCalculationEngine::RULE_TYPE_STANDARD_WORKWEEK, $employee->company_id, $date);
+        }
+
+        $ruleVersion = LaborRuleVersion::activeFor($laborRule->id, $date);
+
+        if ($ruleVersion === null) {
+            throw new NoActiveLaborRuleVersionException(TimeCalculationEngine::RULE_TYPE_STANDARD_WORKWEEK, $employee->company_id, $date);
+        }
+
+        return $ruleVersion;
+    }
+
+    /**
+     * @return array{0: float, 1: float} monthly_hours_divisor and
+     *                                   overtime_surcharge_pct, in that order.
+     *
+     * @throws MissingLaborRuleParameterException
+     */
+    private function requireOvertimeParameters(LaborRuleVersion $ruleVersion): array
+    {
+        $parameters = $ruleVersion->parameters;
+
+        if (! array_key_exists('monthly_hours_divisor', $parameters)) {
+            throw new MissingLaborRuleParameterException($ruleVersion->id, 'monthly_hours_divisor');
+        }
+
+        if (! array_key_exists('overtime_surcharge_pct', $parameters)) {
+            throw new MissingLaborRuleParameterException($ruleVersion->id, 'overtime_surcharge_pct');
+        }
+
+        return [(float) $parameters['monthly_hours_divisor'], (float) $parameters['overtime_surcharge_pct']];
+    }
+
+    /**
+     * Resolves the EmploymentContract in force for $employee on $date.
+     * Employee::activeContractAt() returns null both before hire and when
+     * an employment_contracts gap exists on that specific date; either way
+     * there is no salary to derive an overtime rate from, which is the same
+     * "cannot proceed without guessing" failure mode
+     * resolveContractSubRanges() already documents for zero-contract
+     * coverage — this reuses that exact same AmbiguousContractException
+     * rather than inventing a second exception type for what is, from the
+     * caller's perspective, the identical class of ambiguity (never guess
+     * which contract/salary applies, per project rule #16).
+     *
+     * @throws AmbiguousContractException
+     */
+    private function resolveContractForOvertime(Employee $employee, CarbonInterface $date): EmploymentContract
+    {
+        $contract = $employee->activeContractAt($date);
+
+        if ($contract === null) {
+            throw new AmbiguousContractException($employee->id, $date);
+        }
+
+        return $contract;
     }
 }

@@ -3,14 +3,20 @@
 namespace Tests\Unit\Payroll;
 
 use App\Exceptions\AmbiguousContractException;
+use App\Exceptions\MissingLaborRuleParameterException;
+use App\Exceptions\NoActiveLaborRuleVersionException;
 use App\Exceptions\NoAttendanceOrNoveltyDataException;
 use App\Models\AttendanceRecord;
 use App\Models\Company;
 use App\Models\Employee;
 use App\Models\EmploymentContract;
+use App\Models\LaborRule;
+use App\Models\LaborRuleVersion;
 use App\Models\NoveltyRecord;
+use App\Models\OvertimeRecord;
 use App\Models\PayrollPeriod;
 use App\Models\SalaryHistory;
+use App\Models\Shift;
 use App\Services\Payroll\PayrollCalculationService;
 use Carbon\CarbonInterface;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -71,6 +77,14 @@ class PayrollCalculationServiceTest extends TestCase
             public function callAssertHasAttendanceOrNoveltyCoverage(Employee $employee, PayrollPeriod $period): void
             {
                 $this->assertHasAttendanceOrNoveltyCoverage($employee, $period);
+            }
+
+            /**
+             * @return Collection<int, array{concept_code: string, quantity: float, rate: float, amount: float}>
+             */
+            public function callAuthorizedOvertimeLines(Employee $employee, PayrollPeriod $period): Collection
+            {
+                return $this->authorizedOvertimeLines($employee, $period);
             }
         };
     }
@@ -330,5 +344,191 @@ class PayrollCalculationServiceTest extends TestCase
         $this->expectException(NoAttendanceOrNoveltyDataException::class);
 
         $this->service->callAssertHasAttendanceOrNoveltyCoverage($this->employee, $period);
+    }
+
+    /**
+     * Same shape as TimeCalculationEngineTest's own ruleVersion() helper:
+     * reuses (or creates) the company's single STANDARD_WORKWEEK LaborRule
+     * and attaches a version with the given parameters.
+     */
+    private function laborRuleVersion(array $parameters, ?string $effectiveFrom = null): LaborRuleVersion
+    {
+        $laborRule = LaborRule::query()
+            ->where('company_id', $this->company->id)
+            ->where('rule_type', 'STANDARD_WORKWEEK')
+            ->first() ?? LaborRule::factory()->create([
+                'company_id' => $this->company->id,
+                'rule_type' => 'STANDARD_WORKWEEK',
+            ]);
+
+        return LaborRuleVersion::factory()->create([
+            'company_id' => $this->company->id,
+            'labor_rule_id' => $laborRule->id,
+            'effective_from' => $effectiveFrom ?? '2026-01-01',
+            'effective_to' => null,
+            'parameters' => $parameters,
+        ]);
+    }
+
+    private function shift(string $date): Shift
+    {
+        return Shift::factory()->create([
+            'company_id' => $this->company->id,
+            'date' => $date,
+        ]);
+    }
+
+    private function authorizedOvertimeRecord(Shift $shift, int $authorizedMinutes): OvertimeRecord
+    {
+        return OvertimeRecord::factory()->create([
+            'company_id' => $this->company->id,
+            'employee_id' => $this->employee->id,
+            'shift_id' => $shift->id,
+            'detected_minutes' => $authorizedMinutes,
+            'authorized_minutes' => $authorizedMinutes,
+            'status' => 'authorized',
+        ]);
+    }
+
+    public function test_zero_authorized_overtime_records_returns_an_empty_collection_without_throwing()
+    {
+        $period = $this->period('2026-03-01', '2026-03-15');
+
+        $lines = $this->service->callAuthorizedOvertimeLines($this->employee, $period);
+
+        $this->assertCount(0, $lines);
+    }
+
+    public function test_one_authorized_overtime_record_produces_the_correct_hourly_rate_math()
+    {
+        $period = $this->period('2026-03-01', '2026-03-15');
+        $this->contract('2025-01-01', null, 2400000);
+        $this->laborRuleVersion(['monthly_hours_divisor' => 240, 'overtime_surcharge_pct' => 0.25]);
+        $shift = $this->shift('2026-03-10');
+        $this->authorizedOvertimeRecord($shift, 120);
+
+        $lines = $this->service->callAuthorizedOvertimeLines($this->employee, $period);
+
+        $this->assertCount(1, $lines);
+
+        $line = $lines->first();
+        $this->assertSame('OVERTIME', $line['concept_code']);
+        // hourly_rate = 2,400,000 / 240 = 10,000.
+        // overtime_rate = 10,000 * (1 + 0.25) = 12,500.
+        // quantity = 120 authorized minutes / 60 = 2.0 hours.
+        // amount = 12,500 * 2.0 = 25,000.
+        $this->assertEqualsWithDelta(2.0, $line['quantity'], 0.0001);
+        $this->assertEqualsWithDelta(12500.0, $line['rate'], 0.0001);
+        $this->assertEqualsWithDelta(25000.0, $line['amount'], 0.0001);
+    }
+
+    public function test_missing_monthly_hours_divisor_parameter_throws()
+    {
+        $period = $this->period('2026-03-01', '2026-03-15');
+        $this->contract('2025-01-01', null, 2400000);
+        $this->laborRuleVersion(['overtime_surcharge_pct' => 0.25]);
+        $shift = $this->shift('2026-03-10');
+        $this->authorizedOvertimeRecord($shift, 120);
+
+        $this->expectException(MissingLaborRuleParameterException::class);
+
+        $this->service->callAuthorizedOvertimeLines($this->employee, $period);
+    }
+
+    public function test_missing_overtime_surcharge_pct_parameter_throws()
+    {
+        $period = $this->period('2026-03-01', '2026-03-15');
+        $this->contract('2025-01-01', null, 2400000);
+        $this->laborRuleVersion(['monthly_hours_divisor' => 240]);
+        $shift = $this->shift('2026-03-10');
+        $this->authorizedOvertimeRecord($shift, 120);
+
+        $this->expectException(MissingLaborRuleParameterException::class);
+
+        $this->service->callAuthorizedOvertimeLines($this->employee, $period);
+    }
+
+    public function test_no_active_labor_rule_version_for_the_shift_date_throws()
+    {
+        $period = $this->period('2026-03-01', '2026-03-15');
+        $this->contract('2025-01-01', null, 2400000);
+        // Deliberately no LaborRule/LaborRuleVersion created for the company.
+        $shift = $this->shift('2026-03-10');
+        $this->authorizedOvertimeRecord($shift, 120);
+
+        $this->expectException(NoActiveLaborRuleVersionException::class);
+
+        $this->service->callAuthorizedOvertimeLines($this->employee, $period);
+    }
+
+    public function test_overtime_records_not_in_authorized_status_are_excluded()
+    {
+        $period = $this->period('2026-03-01', '2026-03-15');
+        $detectedShift = $this->shift('2026-03-05');
+        $requestedShift = $this->shift('2026-03-06');
+        $rejectedShift = $this->shift('2026-03-07');
+
+        OvertimeRecord::factory()->create([
+            'company_id' => $this->company->id,
+            'employee_id' => $this->employee->id,
+            'shift_id' => $detectedShift->id,
+            'status' => 'detected',
+        ]);
+        OvertimeRecord::factory()->create([
+            'company_id' => $this->company->id,
+            'employee_id' => $this->employee->id,
+            'shift_id' => $requestedShift->id,
+            'requested_minutes' => 60,
+            'status' => 'requested',
+        ]);
+        OvertimeRecord::factory()->create([
+            'company_id' => $this->company->id,
+            'employee_id' => $this->employee->id,
+            'shift_id' => $rejectedShift->id,
+            'status' => 'rejected',
+        ]);
+
+        $lines = $this->service->callAuthorizedOvertimeLines($this->employee, $period);
+
+        $this->assertCount(0, $lines);
+    }
+
+    public function test_an_authorized_overtime_record_whose_shift_date_falls_outside_the_period_is_excluded()
+    {
+        $period = $this->period('2026-03-01', '2026-03-15');
+        $shiftBeforePeriod = $this->shift('2026-02-20');
+
+        $this->authorizedOvertimeRecord($shiftBeforePeriod, 120);
+
+        $lines = $this->service->callAuthorizedOvertimeLines($this->employee, $period);
+
+        $this->assertCount(0, $lines);
+    }
+
+    public function test_two_authorized_overtime_records_in_the_same_period_produce_two_separate_lines()
+    {
+        $period = $this->period('2026-03-01', '2026-03-15');
+        $this->contract('2025-01-01', null, 2400000);
+        $this->laborRuleVersion(['monthly_hours_divisor' => 240, 'overtime_surcharge_pct' => 0.25]);
+        $firstShift = $this->shift('2026-03-10');
+        $secondShift = $this->shift('2026-03-12');
+
+        $this->authorizedOvertimeRecord($firstShift, 60);
+        $this->authorizedOvertimeRecord($secondShift, 180);
+
+        $lines = $this->service->callAuthorizedOvertimeLines($this->employee, $period);
+
+        $this->assertCount(2, $lines);
+
+        // hourly_rate = 2,400,000 / 240 = 10,000; overtime_rate = 12,500 for both.
+        $firstLine = $lines->first();
+        $this->assertEqualsWithDelta(1.0, $firstLine['quantity'], 0.0001);
+        $this->assertEqualsWithDelta(12500.0, $firstLine['rate'], 0.0001);
+        $this->assertEqualsWithDelta(12500.0, $firstLine['amount'], 0.0001);
+
+        $secondLine = $lines->last();
+        $this->assertEqualsWithDelta(3.0, $secondLine['quantity'], 0.0001);
+        $this->assertEqualsWithDelta(12500.0, $secondLine['rate'], 0.0001);
+        $this->assertEqualsWithDelta(37500.0, $secondLine['amount'], 0.0001);
     }
 }
