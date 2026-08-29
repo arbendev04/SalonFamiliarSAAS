@@ -7,10 +7,11 @@ use Illuminate\Database\Seeder;
 
 /**
  * Seeds the platform-default (company_id = null) catalog rows for the payroll
- * concept catalog, scoped to the 4 codes named in .ai/10-PAYROLL.md Fase 9
- * (scoped-down 3-concept MVP): BASE_SALARY, OVERTIME (earnings) and LOAN,
- * GARNISHMENT (deductions). `PayrollCalculationService` (a later commit)
- * resolves lines against these codes.
+ * concept catalog: BASE_SALARY, OVERTIME (earnings, .ai/10-PAYROLL.md Fase 9)
+ * and LOAN, GARNISHMENT, SOCIAL_SECURITY (deductions — SOCIAL_SECURITY is a
+ * generic bucket label added in Fase 10, never a real entity name or rate;
+ * see .ai/11-SOCIAL-SECURITY.md). `PayrollCalculationService` resolves lines
+ * against these codes.
  *
  * Follows the same DIRECTO/GLOBAL platform-default pattern as
  * EssentialNoveltyCatalogSeeder / ColombianHolidaySeeder — see
@@ -26,6 +27,7 @@ class PayrollConceptCatalogSeeder extends Seeder
         'OVERTIME' => ['name' => 'Horas extra', 'type' => 'earning', 'calculation_method' => 'hourly'],
         'LOAN' => ['name' => 'Préstamo', 'type' => 'deduction', 'calculation_method' => 'fixed'],
         'GARNISHMENT' => ['name' => 'Embargo', 'type' => 'deduction', 'calculation_method' => 'fixed'],
+        'SOCIAL_SECURITY' => ['name' => 'Aportes de seguridad social', 'type' => 'deduction', 'calculation_method' => 'percentage'],
     ];
 
     public function run(): void

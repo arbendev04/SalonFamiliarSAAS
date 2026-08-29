@@ -19,15 +19,16 @@ class PayrollConceptCatalogSeederTest extends TestCase
         'OVERTIME' => ['name' => 'Horas extra', 'type' => 'earning', 'calculation_method' => 'hourly'],
         'LOAN' => ['name' => 'Préstamo', 'type' => 'deduction', 'calculation_method' => 'fixed'],
         'GARNISHMENT' => ['name' => 'Embargo', 'type' => 'deduction', 'calculation_method' => 'fixed'],
+        'SOCIAL_SECURITY' => ['name' => 'Aportes de seguridad social', 'type' => 'deduction', 'calculation_method' => 'percentage'],
     ];
 
-    public function test_seeds_exactly_4_platform_default_payroll_concept_definitions_with_expected_attributes()
+    public function test_seeds_exactly_5_platform_default_payroll_concept_definitions_with_expected_attributes()
     {
         $this->seed(PayrollConceptCatalogSeeder::class);
 
         $concepts = PayrollConceptDefinition::query()->whereNull('company_id')->get();
 
-        $this->assertCount(4, $concepts);
+        $this->assertCount(5, $concepts);
 
         foreach (self::EXPECTED_CATALOG as $code => $attributes) {
             $this->assertTrue(
@@ -45,16 +46,16 @@ class PayrollConceptCatalogSeederTest extends TestCase
         $this->seed(PayrollConceptCatalogSeeder::class);
         $this->seed(PayrollConceptCatalogSeeder::class);
 
-        $this->assertSame(4, PayrollConceptDefinition::query()->whereNull('company_id')->count());
+        $this->assertSame(5, PayrollConceptDefinition::query()->whereNull('company_id')->count());
     }
 
-    public function test_seeds_two_earning_concepts_and_two_deduction_concepts()
+    public function test_seeds_two_earning_concepts_and_three_deduction_concepts()
     {
         $this->seed(PayrollConceptCatalogSeeder::class);
 
         $concepts = PayrollConceptDefinition::query()->whereNull('company_id')->get();
 
         $this->assertCount(2, $concepts->where('type', 'earning'));
-        $this->assertCount(2, $concepts->where('type', 'deduction'));
+        $this->assertCount(3, $concepts->where('type', 'deduction'));
     }
 }
