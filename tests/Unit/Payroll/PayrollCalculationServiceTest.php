@@ -3,9 +3,12 @@
 namespace Tests\Unit\Payroll;
 
 use App\Exceptions\AmbiguousContractException;
+use App\Exceptions\NoAttendanceOrNoveltyDataException;
+use App\Models\AttendanceRecord;
 use App\Models\Company;
 use App\Models\Employee;
 use App\Models\EmploymentContract;
+use App\Models\NoveltyRecord;
 use App\Models\PayrollPeriod;
 use App\Models\SalaryHistory;
 use App\Services\Payroll\PayrollCalculationService;
@@ -63,6 +66,11 @@ class PayrollCalculationServiceTest extends TestCase
             public function callProratedBaseSalaryLines(Employee $employee, PayrollPeriod $period): array
             {
                 return $this->proratedBaseSalaryLines($employee, $period);
+            }
+
+            public function callAssertHasAttendanceOrNoveltyCoverage(Employee $employee, PayrollPeriod $period): void
+            {
+                $this->assertHasAttendanceOrNoveltyCoverage($employee, $period);
             }
         };
     }
@@ -237,5 +245,90 @@ class PayrollCalculationServiceTest extends TestCase
 
         $totalAmount = $result['lines']->sum('amount');
         $this->assertEqualsWithDelta(1850000.0, $totalAmount, 0.0001);
+    }
+
+    public function test_an_attendance_record_within_the_period_satisfies_the_coverage_guard()
+    {
+        $period = $this->period('2026-02-01', '2026-02-15');
+
+        AttendanceRecord::factory()->create([
+            'company_id' => $this->company->id,
+            'employee_id' => $this->employee->id,
+            'date' => '2026-02-05',
+        ]);
+
+        $this->service->callAssertHasAttendanceOrNoveltyCoverage($this->employee, $period);
+
+        $this->assertTrue(true);
+    }
+
+    public function test_an_approved_novelty_record_overlapping_the_period_satisfies_the_coverage_guard_with_zero_attendance_records()
+    {
+        $period = $this->period('2026-02-01', '2026-02-15');
+
+        NoveltyRecord::factory()->create([
+            'company_id' => $this->company->id,
+            'employee_id' => $this->employee->id,
+            'status' => 'approved',
+            'date_from' => '2026-02-10',
+            'date_to' => '2026-02-20',
+        ]);
+
+        $this->service->callAssertHasAttendanceOrNoveltyCoverage($this->employee, $period);
+
+        $this->assertTrue(true);
+    }
+
+    public function test_a_pending_or_rejected_novelty_record_does_not_satisfy_the_coverage_guard()
+    {
+        $period = $this->period('2026-02-01', '2026-02-15');
+
+        NoveltyRecord::factory()->create([
+            'company_id' => $this->company->id,
+            'employee_id' => $this->employee->id,
+            'status' => 'pending',
+            'date_from' => '2026-02-10',
+            'date_to' => '2026-02-20',
+        ]);
+
+        $this->expectException(NoAttendanceOrNoveltyDataException::class);
+
+        $this->service->callAssertHasAttendanceOrNoveltyCoverage($this->employee, $period);
+    }
+
+    public function test_neither_attendance_nor_approved_novelty_records_throws_no_attendance_or_novelty_data_exception()
+    {
+        $period = $this->period('2026-02-01', '2026-02-15');
+
+        try {
+            $this->service->callAssertHasAttendanceOrNoveltyCoverage($this->employee, $period);
+            $this->fail('Expected NoAttendanceOrNoveltyDataException to be thrown.');
+        } catch (NoAttendanceOrNoveltyDataException $exception) {
+            $this->assertStringContainsString($this->employee->id, $exception->getMessage());
+            $this->assertStringContainsString($period->id, $exception->getMessage());
+        }
+    }
+
+    public function test_records_outside_the_periods_date_range_do_not_satisfy_the_coverage_guard()
+    {
+        $period = $this->period('2026-02-01', '2026-02-15');
+
+        // Both records exist but fall entirely before the period starts.
+        AttendanceRecord::factory()->create([
+            'company_id' => $this->company->id,
+            'employee_id' => $this->employee->id,
+            'date' => '2026-01-20',
+        ]);
+        NoveltyRecord::factory()->create([
+            'company_id' => $this->company->id,
+            'employee_id' => $this->employee->id,
+            'status' => 'approved',
+            'date_from' => '2026-01-10',
+            'date_to' => '2026-01-25',
+        ]);
+
+        $this->expectException(NoAttendanceOrNoveltyDataException::class);
+
+        $this->service->callAssertHasAttendanceOrNoveltyCoverage($this->employee, $period);
     }
 }

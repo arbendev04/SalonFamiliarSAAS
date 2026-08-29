@@ -4,8 +4,11 @@ namespace App\Services\Payroll;
 
 use App\Exceptions\AmbiguousContractException;
 use App\Exceptions\AmbiguousSalaryHistoryException;
+use App\Exceptions\NoAttendanceOrNoveltyDataException;
+use App\Models\AttendanceRecord;
 use App\Models\Employee;
 use App\Models\EmploymentContract;
+use App\Models\NoveltyRecord;
 use App\Models\PayrollPeriod;
 use App\Models\SalaryHistory;
 use Carbon\CarbonInterface;
@@ -25,6 +28,61 @@ use Illuminate\Support\Collection;
  */
 class PayrollCalculationService
 {
+    /**
+     * Guards against liquidating an employee for whom attendance_records and
+     * novelty_records are both completely silent over the period — the
+     * "empleado sin ningún attendance_record ni novelty_record que cubra el
+     * periodo" case, per the plan's confirmed product decision #2
+     * (composed-knitting-dusk.md, section D) and project rule #16: this
+     * specific employee's calculation is blocked with an explicit error
+     * rather than assuming or zero-filling missing time data. This mirrors
+     * the "contrato ambiguo" pattern in resolveContractSubRanges() — a data
+     * void for one employee never silently degrades into a guessed number,
+     * it blocks that employee while leaving the rest of the batch unaffected.
+     *
+     * Coverage is satisfied by EITHER of:
+     *   - at least one AttendanceRecord with `date` inside
+     *     [period.start_date, period.end_date], OR
+     *   - at least one NoveltyRecord with status='approved' whose
+     *     [date_from, date_to] range overlaps the period — the same
+     *     range-overlap predicate shape as resolveContractSubRanges()'s
+     *     contract query (start <= period.end AND end >= period.start),
+     *     and the same "only approved counts" rule already established by
+     *     NoveltyRecordLookup.
+     *
+     * This check is intentionally coarse: it confirms SOME record exists
+     * somewhere in the period, not that EVERY single day of the period is
+     * covered. A genuinely per-day completeness check is not required by any
+     * confirmed acceptance criterion here and would invent an unspecified
+     * completeness threshold — out of scope for this guard.
+     *
+     * @throws NoAttendanceOrNoveltyDataException
+     */
+    protected function assertHasAttendanceOrNoveltyCoverage(Employee $employee, PayrollPeriod $period): void
+    {
+        $hasAttendanceRecord = AttendanceRecord::query()
+            ->where('employee_id', $employee->id)
+            ->whereBetween('date', [$period->start_date->toDateString(), $period->end_date->toDateString()])
+            ->exists();
+
+        if ($hasAttendanceRecord) {
+            return;
+        }
+
+        $hasApprovedNoveltyRecord = NoveltyRecord::query()
+            ->where('employee_id', $employee->id)
+            ->where('status', 'approved')
+            ->where('date_from', '<=', $period->end_date->toDateString())
+            ->where('date_to', '>=', $period->start_date->toDateString())
+            ->exists();
+
+        if ($hasApprovedNoveltyRecord) {
+            return;
+        }
+
+        throw new NoAttendanceOrNoveltyDataException($employee->id, $period->id);
+    }
+
     /**
      * Splits [$period->start_date, $period->end_date] into one sub-range per
      * employment_contracts row overlapping it, per .ai/10-PAYROLL.md
