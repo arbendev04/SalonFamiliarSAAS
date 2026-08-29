@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Form, Head, router } from '@inertiajs/vue3';
+import { Form, Head, Link, router } from '@inertiajs/vue3';
 import { ref } from 'vue';
 import SocialSecurityConceptDefinitionController from '@/actions/App/Http/Controllers/SocialSecurityConceptDefinitionController';
 import Heading from '@/components/Heading.vue';
@@ -10,6 +10,7 @@ import { Label } from '@/components/ui/label';
 import { Spinner } from '@/components/ui/spinner';
 import { dashboard } from '@/routes';
 import { index } from '@/routes/social-security/concept-definitions';
+import { index as ruleVersionsIndex } from '@/routes/social-security/concept-definitions/rule-versions';
 
 type SocialSecurityConceptDefinitionRow = {
     id: string;
@@ -178,27 +179,34 @@ function deleteConcept(concept: SocialSecurityConceptDefinitionRow) {
                                 </span>
                             </td>
                             <td class="p-3">
-                                <div
-                                    v-if="
-                                        canManage &&
-                                        !concept.is_platform_default
-                                    "
-                                    class="flex gap-2"
-                                >
-                                    <Button
-                                        size="sm"
-                                        variant="outline"
-                                        @click="startEditing(concept.id)"
+                                <div class="flex flex-wrap gap-2">
+                                    <Link
+                                        :href="ruleVersionsIndex(concept.id)"
+                                        class="text-sm underline underline-offset-4"
                                     >
-                                        Editar
-                                    </Button>
-                                    <Button
-                                        size="sm"
-                                        variant="destructive"
-                                        @click="deleteConcept(concept)"
+                                        Ver tasas de aporte
+                                    </Link>
+                                    <template
+                                        v-if="
+                                            canManage &&
+                                            !concept.is_platform_default
+                                        "
                                     >
-                                        Eliminar
-                                    </Button>
+                                        <Button
+                                            size="sm"
+                                            variant="outline"
+                                            @click="startEditing(concept.id)"
+                                        >
+                                            Editar
+                                        </Button>
+                                        <Button
+                                            size="sm"
+                                            variant="destructive"
+                                            @click="deleteConcept(concept)"
+                                        >
+                                            Eliminar
+                                        </Button>
+                                    </template>
                                 </div>
                             </td>
                         </template>

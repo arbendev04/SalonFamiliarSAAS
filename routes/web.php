@@ -21,6 +21,7 @@ use App\Http\Controllers\ShiftBreakController;
 use App\Http\Controllers\ShiftController;
 use App\Http\Controllers\SocialSecurityConceptDefinitionController;
 use App\Http\Controllers\SocialSecurityEntityController;
+use App\Http\Controllers\SocialSecurityRuleVersionController;
 use App\Http\Controllers\WorkScheduleTemplateController;
 use Illuminate\Support\Facades\Route;
 
@@ -104,6 +105,9 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::post('social-security/concept-definitions', [SocialSecurityConceptDefinitionController::class, 'store'])->name('social-security.concept-definitions.store');
     Route::put('social-security/concept-definitions/{concept}', [SocialSecurityConceptDefinitionController::class, 'update'])->name('social-security.concept-definitions.update');
     Route::delete('social-security/concept-definitions/{concept}', [SocialSecurityConceptDefinitionController::class, 'destroy'])->name('social-security.concept-definitions.destroy');
+
+    Route::get('social-security/concept-definitions/{concept}/rule-versions', [SocialSecurityRuleVersionController::class, 'index'])->name('social-security.concept-definitions.rule-versions.index');
+    Route::post('social-security/concept-definitions/{concept}/rule-versions', [SocialSecurityRuleVersionController::class, 'store'])->name('social-security.rule-versions.store');
 });
 
 require __DIR__.'/settings.php';
