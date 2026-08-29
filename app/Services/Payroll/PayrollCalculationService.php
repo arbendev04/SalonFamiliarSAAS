@@ -15,6 +15,7 @@ use App\Models\LaborRule;
 use App\Models\LaborRuleVersion;
 use App\Models\NoveltyRecord;
 use App\Models\OvertimeRecord;
+use App\Models\PayrollDeductionPlan;
 use App\Models\PayrollPeriod;
 use App\Models\SalaryHistory;
 use App\Services\TimeCalculation\TimeCalculationEngine;
@@ -29,9 +30,10 @@ use Illuminate\Support\Collection;
  * calculateForPeriod() (commit 10) will own the DB::transaction() /
  * PayrollEntry::updateOrCreate() wiring on top of the pure math built here.
  *
- * This commit adds the authorized-overtime-to-money translation (plan
- * section D, "Horas extra") on top of commits 6-7's contract sub-range
- * resolution and base-salary proration — no deductions yet, nothing
+ * This commit adds the fixed-deduction-plan-to-money translation (plan
+ * section D/H, "loans/garnishments") on top of commits 6-8's contract
+ * sub-range resolution, base-salary proration, and authorized-overtime
+ * translation — the third and final MVP-scoped money concept. Nothing is
  * persisted to payroll_entries/payroll_entry_lines yet.
  */
 class PayrollCalculationService
@@ -468,5 +470,57 @@ class PayrollCalculationService
         }
 
         return $contract;
+    }
+
+    /**
+     * Translates the employee's active PayrollDeductionPlan rows (loans/
+     * garnishments — plan section D/H) into DEDUCTION payroll_entry_lines
+     * data. `PayrollDeductionPlan::scopeActiveFor()` already excludes any
+     * plan with `remaining` = 0, so an employee with zero deduction plans —
+     * or with only fully-paid-off ones — simply produces zero lines here,
+     * which is entirely normal (not every employee has a loan or
+     * garnishment), not an error.
+     *
+     * For each active plan, `amount = min(installment_amount, remaining)`:
+     * a plan nearing its end might have less remaining than a full
+     * installment, and this method must never deduct more than what is
+     * actually owed.
+     *
+     * IMPORTANT — this method does NOT mutate `remaining`. It only computes
+     * what WOULD be deducted for the current calculation; the actual
+     * decrement happens exclusively in PayrollPeriodService::close() (a
+     * later commit). This is deliberate: an OPEN/CALCULATED period can be
+     * recalculated multiple times before it is closed, and recalculating
+     * must never double-consume installment balance. `plan_id` is carried
+     * in the returned array purely so that later close()-time wiring — which
+     * needs to know exactly which plan row to decrement — has it on hand
+     * without an extra lookup.
+     *
+     * Declared `protected`, not `private` (the plan sketch's literal
+     * visibility), to stay consistent with every other testable
+     * computational helper already in this class — see
+     * authorizedOvertimeLines()'s docblock for why: a `private` method here
+     * would not be reachable from the anonymous-subclass test wrapper this
+     * file's tests use.
+     *
+     * @return Collection<int, array{concept_id: string, plan_id: string, quantity: null, rate: null, amount: float}>
+     */
+    protected function fixedDeductionLines(Employee $employee): Collection
+    {
+        return PayrollDeductionPlan::query()
+            ->activeFor($employee->id)
+            ->get()
+            ->map(function (PayrollDeductionPlan $plan): array {
+                $amount = min((float) $plan->installment_amount, (float) $plan->remaining);
+
+                return [
+                    'concept_id' => $plan->concept_id,
+                    'plan_id' => $plan->id,
+                    'quantity' => null,
+                    'rate' => null,
+                    'amount' => $amount,
+                ];
+            })
+            ->values();
     }
 }

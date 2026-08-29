@@ -14,6 +14,7 @@ use App\Models\LaborRule;
 use App\Models\LaborRuleVersion;
 use App\Models\NoveltyRecord;
 use App\Models\OvertimeRecord;
+use App\Models\PayrollDeductionPlan;
 use App\Models\PayrollPeriod;
 use App\Models\SalaryHistory;
 use App\Models\Shift;
@@ -85,6 +86,14 @@ class PayrollCalculationServiceTest extends TestCase
             public function callAuthorizedOvertimeLines(Employee $employee, PayrollPeriod $period): Collection
             {
                 return $this->authorizedOvertimeLines($employee, $period);
+            }
+
+            /**
+             * @return Collection<int, array{concept_id: string, plan_id: string, quantity: null, rate: null, amount: float}>
+             */
+            public function callFixedDeductionLines(Employee $employee): Collection
+            {
+                return $this->fixedDeductionLines($employee);
             }
         };
     }
@@ -530,5 +539,121 @@ class PayrollCalculationServiceTest extends TestCase
         $this->assertEqualsWithDelta(3.0, $secondLine['quantity'], 0.0001);
         $this->assertEqualsWithDelta(12500.0, $secondLine['rate'], 0.0001);
         $this->assertEqualsWithDelta(37500.0, $secondLine['amount'], 0.0001);
+    }
+
+    public function test_an_employee_with_zero_deduction_plans_produces_an_empty_collection()
+    {
+        $lines = $this->service->callFixedDeductionLines($this->employee);
+
+        $this->assertCount(0, $lines);
+    }
+
+    public function test_an_employee_with_one_active_plan_produces_one_line_with_the_full_installment_amount()
+    {
+        $plan = PayrollDeductionPlan::factory()->create([
+            'company_id' => $this->company->id,
+            'employee_id' => $this->employee->id,
+            'total_amount' => 600000,
+            'installments' => 6,
+            'installment_amount' => 100000,
+            'remaining' => 400000,
+        ]);
+
+        $lines = $this->service->callFixedDeductionLines($this->employee);
+
+        $this->assertCount(1, $lines);
+
+        $line = $lines->first();
+        $this->assertSame($plan->concept_id, $line['concept_id']);
+        $this->assertSame($plan->id, $line['plan_id']);
+        $this->assertEqualsWithDelta(100000.0, $line['amount'], 0.0001);
+    }
+
+    public function test_a_plan_with_remaining_less_than_the_installment_amount_is_capped_at_remaining()
+    {
+        $plan = PayrollDeductionPlan::factory()->create([
+            'company_id' => $this->company->id,
+            'employee_id' => $this->employee->id,
+            'total_amount' => 600000,
+            'installments' => 6,
+            'installment_amount' => 100000,
+            // Nearly paid off: less left than a full installment.
+            'remaining' => 35000,
+        ]);
+
+        $lines = $this->service->callFixedDeductionLines($this->employee);
+
+        $this->assertCount(1, $lines);
+
+        $line = $lines->first();
+        $this->assertSame($plan->id, $line['plan_id']);
+        $this->assertEqualsWithDelta(35000.0, $line['amount'], 0.0001);
+    }
+
+    public function test_a_fully_paid_off_plan_is_excluded_entirely()
+    {
+        PayrollDeductionPlan::factory()->create([
+            'company_id' => $this->company->id,
+            'employee_id' => $this->employee->id,
+            'total_amount' => 600000,
+            'installments' => 6,
+            'installment_amount' => 100000,
+            'remaining' => 0,
+        ]);
+
+        $lines = $this->service->callFixedDeductionLines($this->employee);
+
+        $this->assertCount(0, $lines);
+    }
+
+    public function test_two_active_plans_produce_two_separate_lines_with_the_correct_data()
+    {
+        $firstPlan = PayrollDeductionPlan::factory()->create([
+            'company_id' => $this->company->id,
+            'employee_id' => $this->employee->id,
+            'total_amount' => 600000,
+            'installments' => 6,
+            'installment_amount' => 100000,
+            'remaining' => 400000,
+        ]);
+
+        $secondPlan = PayrollDeductionPlan::factory()->create([
+            'company_id' => $this->company->id,
+            'employee_id' => $this->employee->id,
+            'total_amount' => 300000,
+            'installments' => 3,
+            'installment_amount' => 100000,
+            'remaining' => 50000,
+        ]);
+
+        $lines = $this->service->callFixedDeductionLines($this->employee);
+
+        $this->assertCount(2, $lines);
+
+        $firstLine = $lines->firstWhere('plan_id', $firstPlan->id);
+        $this->assertNotNull($firstLine);
+        $this->assertSame($firstPlan->concept_id, $firstLine['concept_id']);
+        $this->assertEqualsWithDelta(100000.0, $firstLine['amount'], 0.0001);
+
+        $secondLine = $lines->firstWhere('plan_id', $secondPlan->id);
+        $this->assertNotNull($secondLine);
+        $this->assertSame($secondPlan->concept_id, $secondLine['concept_id']);
+        $this->assertEqualsWithDelta(50000.0, $secondLine['amount'], 0.0001);
+    }
+
+    public function test_calling_fixed_deduction_lines_does_not_mutate_the_plans_remaining_balance()
+    {
+        $plan = PayrollDeductionPlan::factory()->create([
+            'company_id' => $this->company->id,
+            'employee_id' => $this->employee->id,
+            'total_amount' => 600000,
+            'installments' => 6,
+            'installment_amount' => 100000,
+            'remaining' => 400000,
+        ]);
+
+        $this->service->callFixedDeductionLines($this->employee);
+
+        $this->assertEqualsWithDelta(400000.0, $plan->fresh()->remaining, 0.0001);
     }
 }

@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Models\Concerns\BelongsToCompany;
 use Database\Factories\PayrollDeductionPlanFactory;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -60,5 +61,18 @@ class PayrollDeductionPlan extends Model
     public function concept(): BelongsTo
     {
         return $this->belongsTo(PayrollConceptDefinition::class, 'concept_id');
+    }
+
+    /**
+     * A plan with nothing left to deduct (`remaining` = 0) is no longer
+     * "active" for payroll calculation purposes, even though the row itself
+     * is kept around as a paid-off record.
+     *
+     * @param  Builder<PayrollDeductionPlan>  $query
+     * @return Builder<PayrollDeductionPlan>
+     */
+    public function scopeActiveFor(Builder $query, string $employeeId): Builder
+    {
+        return $query->where('employee_id', $employeeId)->where('remaining', '>', 0);
     }
 }
