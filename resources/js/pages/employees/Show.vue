@@ -11,6 +11,7 @@ import { Spinner } from '@/components/ui/spinner';
 import { dashboard } from '@/routes';
 import { index } from '@/routes/employees';
 import { index as attendanceIndex } from '@/routes/employees/attendance';
+import { index as leaveRecordsIndex } from '@/routes/employees/leave-records';
 import { index as shiftsIndex } from '@/routes/employees/shifts';
 import { index as timeCalculationIndex } from '@/routes/employees/time-calculation';
 
@@ -81,6 +82,12 @@ defineOptions({
                     class="text-sm underline underline-offset-4"
                 >
                     Ver cálculo de tiempo
+                </Link>
+                <Link
+                    :href="leaveRecordsIndex(employee.id)"
+                    class="text-sm underline underline-offset-4"
+                >
+                    Ver licencias
                 </Link>
             </div>
         </div>

@@ -9,6 +9,7 @@ use App\Http\Controllers\EmployeeScheduleController;
 use App\Http\Controllers\EmploymentContractController;
 use App\Http\Controllers\HolidayController;
 use App\Http\Controllers\LaborRuleVersionController;
+use App\Http\Controllers\LeaveRecordController;
 use App\Http\Controllers\PayrollInformationController;
 use App\Http\Controllers\PositionController;
 use App\Http\Controllers\ShiftAssignmentController;
@@ -64,6 +65,11 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
     Route::get('employees/{employee}/time-calculation', [AttendanceRecordController::class, 'index'])->name('employees.time-calculation.index');
     Route::post('employees/{employee}/time-calculation/recalculate', [AttendanceRecordController::class, 'recalculate'])->name('employees.time-calculation.recalculate');
+
+    Route::get('employees/{employee}/leave-records', [LeaveRecordController::class, 'index'])->name('employees.leave-records.index');
+    Route::post('employees/{employee}/leave-records', [LeaveRecordController::class, 'store'])->name('employees.leave-records.store');
+    Route::post('leave-records/{record}/approve', [LeaveRecordController::class, 'approve'])->name('leave-records.approve');
+    Route::post('leave-records/{record}/reject', [LeaveRecordController::class, 'reject'])->name('leave-records.reject');
 });
 
 require __DIR__.'/settings.php';

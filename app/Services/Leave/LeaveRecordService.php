@@ -171,6 +171,19 @@ class LeaveRecordService
      */
     private function generateNoveltyAndAbsence(LeaveRecord $record): void
     {
+        // Resolved via LeaveType's own effectiveForCompany() scope, never
+        // via the leaveType() relation's default query: BelongsToCompany's
+        // global scope excludes company_id IS NULL rows whenever a company
+        // is active (SQL's `column = value` never matches NULL — see
+        // HasPlatformOrCompanyDefault's docblock), which would silently
+        // turn every platform-default leave type — including all 4 seeded
+        // by EssentialNoveltyCatalogSeeder — into a null relation the
+        // instant this runs inside a real, company-scoped request.
+        $leaveTypeCode = LeaveType::query()
+            ->effectiveForCompany($record->company_id)
+            ->whereKey($record->leave_type_id)
+            ->value('code');
+
         // At most 2 rows can match (one platform default, one company
         // override sharing the same code) — resolved in PHP with the exact
         // same precedence rule as HasPlatformOrCompanyDefault::
@@ -178,13 +191,13 @@ class LeaveRecordService
         // platform default depending on undefined row order.
         $noveltyType = NoveltyType::query()
             ->effectiveForCompany($record->company_id)
-            ->where('code', $record->leaveType->code)
+            ->where('code', $leaveTypeCode)
             ->get()
             ->sortByDesc(fn (NoveltyType $candidate): bool => $candidate->company_id !== null)
             ->first();
 
         if ($noveltyType === null) {
-            throw new MissingNoveltyTypeForLeaveTypeException($record->leaveType->code, $record->company_id);
+            throw new MissingNoveltyTypeForLeaveTypeException($leaveTypeCode, $record->company_id);
         }
 
         NoveltyRecord::create([
