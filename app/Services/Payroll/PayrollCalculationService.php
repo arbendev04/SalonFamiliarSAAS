@@ -15,26 +15,31 @@ use App\Models\LaborRule;
 use App\Models\LaborRuleVersion;
 use App\Models\NoveltyRecord;
 use App\Models\OvertimeRecord;
+use App\Models\PayrollConceptDefinition;
 use App\Models\PayrollDeductionPlan;
+use App\Models\PayrollEntry;
 use App\Models\PayrollPeriod;
 use App\Models\SalaryHistory;
 use App\Services\TimeCalculation\TimeCalculationEngine;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
+use RuntimeException;
 
 /**
  * Liquidates devengado/deducido/neto per employee per payroll_periods, per
  * .ai/10-PAYROLL.md. Sin colaboradores por constructor (cálculo puro),
- * mirroring App\Services\TimeCalculation\TimeCalculationEngine: this class
- * has no persistence side effects of its own — calculateForEmployee()/
- * calculateForPeriod() (commit 10) will own the DB::transaction() /
- * PayrollEntry::updateOrCreate() wiring on top of the pure math built here.
+ * mirroring App\Services\TimeCalculation\TimeCalculationEngine.
  *
- * This commit adds the fixed-deduction-plan-to-money translation (plan
- * section D/H, "loans/garnishments") on top of commits 6-8's contract
- * sub-range resolution, base-salary proration, and authorized-overtime
- * translation — the third and final MVP-scoped money concept. Nothing is
- * persisted to payroll_entries/payroll_entry_lines yet.
+ * This commit adds the two public entry points — calculateForEmployee()/
+ * calculateForPeriod() — that tie commits 6-9's pure computational helpers
+ * (contract sub-range resolution, base-salary proration, authorized-overtime
+ * translation, fixed-deduction translation) together with real persistence,
+ * mirroring TimeCalculationEngine::calculateForDate()/calculateForRange()'s
+ * exact structural template: compute everything first (cheapest/most-likely
+ * to fail-fast checks first), then persist in one DB::transaction(), with a
+ * per-unit try/catch at the batch level so one blocked employee never aborts
+ * the rest of the period.
  */
 class PayrollCalculationService
 {
@@ -522,5 +527,255 @@ class PayrollCalculationService
                 ];
             })
             ->values();
+    }
+
+    /**
+     * Computes and persists the full settlement for one employee/period,
+     * per .ai/10-PAYROLL.md plan section D. Runs the four computational
+     * guards/translators in cheapest/most-likely-to-fail-fast order — the
+     * same ordering discipline TimeCalculationEngine::calculateForDate()
+     * uses for its own guards — BEFORE opening any transaction, so none of
+     * the six documented exceptions can ever fire mid-write:
+     *
+     *   1. assertHasAttendanceOrNoveltyCoverage() — cheapest, most
+     *      fundamental gate (no attendance/novelty data at all makes every
+     *      other computation moot).
+     *   2. proratedBaseSalaryLines() — also validates contract coverage via
+     *      resolveContractSubRanges() internally.
+     *   3. authorizedOvertimeLines().
+     *   4. fixedDeductionLines() — never throws.
+     *
+     * BASE_SALARY/OVERTIME concept ids are resolved via
+     * PayrollConceptDefinition::effectiveForCompany() (never a bare
+     * ->where('code', ...) on the model directly) because both are
+     * platform-default (company_id=null) catalog rows — the exact
+     * BelongsToCompany global-scope exclusion bug documented on
+     * HasPlatformOrCompanyDefault (and that silently broke LeaveRecordService
+     * in Fase 8) would otherwise make them unreachable once a tenant is
+     * active.
+     *
+     * Persistence happens in ONE DB::transaction(): updateOrCreate() the
+     * PayrollEntry (full replace, never an incremental patch — same
+     * "always regenerate completely" discipline as AttendanceRecord), then
+     * delete ALL of its existing payroll_entry_lines and recreate them fresh
+     * from the three computed line sets. This is safe to call repeatedly
+     * for the same employee/period (e.g. after an underlying
+     * AttendanceRecord changes) — see the unique constraint on
+     * (payroll_period_id, employee_id).
+     *
+     * If any of the six documented exceptions is thrown — whether from the
+     * pre-transaction computation above, or (defensively) from inside the
+     * transaction itself — this method persists a status='blocked'
+     * PayrollEntry (contract_id=null, all totals 0, zero lines) and
+     * RE-THROWS the original exception: the caller (calculateForPeriod())
+     * needs to know both that this employee was blocked AND why, but the
+     * blocked row must still exist in the DB for PayrollPeriodService::
+     * close() to detect later.
+     *
+     * A thrown exception inside a DB::transaction() closure rolls that
+     * transaction back automatically — so the blocked-entry write can never
+     * happen INSIDE the same transaction that just failed (a rolled-back
+     * transaction can't accept more writes as part of the same unit of
+     * work). persistBlockedEntry() therefore always runs in its own, fresh
+     * DB::transaction(), opened only in the catch block, strictly AFTER the
+     * first transaction's implicit rollback has already completed.
+     *
+     * @throws AmbiguousContractException
+     * @throws AmbiguousSalaryHistoryException
+     * @throws NoActiveLaborRuleVersionException
+     * @throws AmbiguousLaborRuleVersionException
+     * @throws MissingLaborRuleParameterException
+     * @throws NoAttendanceOrNoveltyDataException
+     */
+    public function calculateForEmployee(PayrollPeriod $period, Employee $employee): PayrollEntry
+    {
+        try {
+            $this->assertHasAttendanceOrNoveltyCoverage($employee, $period);
+
+            $baseSalary = $this->proratedBaseSalaryLines($employee, $period);
+            $overtimeLines = $this->authorizedOvertimeLines($employee, $period);
+            $deductionLines = $this->fixedDeductionLines($employee);
+
+            $baseSalaryConceptId = $this->resolveConceptId($employee->company_id, 'BASE_SALARY');
+            $overtimeConceptId = $this->resolveConceptId($employee->company_id, 'OVERTIME');
+
+            $grossTotal = $baseSalary['lines']->sum('amount') + $overtimeLines->sum('amount');
+            $deductionsTotal = $deductionLines->sum('amount');
+            $netTotal = $grossTotal - $deductionsTotal;
+
+            return DB::transaction(function () use (
+                $period,
+                $employee,
+                $baseSalary,
+                $overtimeLines,
+                $deductionLines,
+                $baseSalaryConceptId,
+                $overtimeConceptId,
+                $grossTotal,
+                $deductionsTotal,
+                $netTotal,
+            ): PayrollEntry {
+                $entry = PayrollEntry::updateOrCreate(
+                    ['payroll_period_id' => $period->id, 'employee_id' => $employee->id],
+                    [
+                        'company_id' => $employee->company_id,
+                        'contract_id' => $baseSalary['last_contract']->id,
+                        'status' => 'calculated',
+                        'gross_total' => $grossTotal,
+                        'deductions_total' => $deductionsTotal,
+                        'net_total' => $netTotal,
+                    ],
+                );
+
+                $entry->lines()->delete();
+
+                foreach ($baseSalary['lines'] as $line) {
+                    $entry->lines()->create([
+                        'company_id' => $employee->company_id,
+                        'concept_id' => $baseSalaryConceptId,
+                        'contract_id' => $line['contract_id'],
+                        'type' => 'earning',
+                        'quantity' => $line['quantity'],
+                        'rate' => $line['rate'],
+                        'amount' => $line['amount'],
+                    ]);
+                }
+
+                foreach ($overtimeLines as $line) {
+                    $entry->lines()->create([
+                        'company_id' => $employee->company_id,
+                        'concept_id' => $overtimeConceptId,
+                        'contract_id' => null,
+                        'type' => 'earning',
+                        'quantity' => $line['quantity'],
+                        'rate' => $line['rate'],
+                        'amount' => $line['amount'],
+                    ]);
+                }
+
+                foreach ($deductionLines as $line) {
+                    $entry->lines()->create([
+                        'company_id' => $employee->company_id,
+                        'concept_id' => $line['concept_id'],
+                        'contract_id' => null,
+                        'type' => 'deduction',
+                        'quantity' => $line['quantity'],
+                        'rate' => $line['rate'],
+                        'amount' => $line['amount'],
+                    ]);
+                }
+
+                return $entry;
+            });
+        } catch (AmbiguousContractException|AmbiguousSalaryHistoryException|NoActiveLaborRuleVersionException|AmbiguousLaborRuleVersionException|MissingLaborRuleParameterException|NoAttendanceOrNoveltyDataException $e) {
+            $this->persistBlockedEntry($period, $employee);
+
+            throw $e;
+        }
+    }
+
+    /**
+     * Persists a status='blocked' PayrollEntry for one employee/period —
+     * contract_id=null, all three totals at 0, and its lines fully cleared
+     * — so that PayrollPeriodService::close() (a later commit) can detect
+     * unresolved blocked employees without depending solely on the
+     * transient batch summary calculateForPeriod() returns. Always runs in
+     * its own fresh transaction; see calculateForEmployee()'s docblock for
+     * why this can never share a transaction with the failed calculation
+     * attempt that triggered it.
+     */
+    private function persistBlockedEntry(PayrollPeriod $period, Employee $employee): void
+    {
+        DB::transaction(function () use ($period, $employee): void {
+            $entry = PayrollEntry::updateOrCreate(
+                ['payroll_period_id' => $period->id, 'employee_id' => $employee->id],
+                [
+                    'company_id' => $employee->company_id,
+                    'contract_id' => null,
+                    'status' => 'blocked',
+                    'gross_total' => 0,
+                    'deductions_total' => 0,
+                    'net_total' => 0,
+                ],
+            );
+
+            $entry->lines()->delete();
+        });
+    }
+
+    /**
+     * Resolves a payroll concept definition's id by code for the given
+     * company, via PayrollConceptDefinition::effectiveForCompany() —
+     * NEVER a bare ->where('code', ...) on the model directly. BASE_SALARY
+     * and OVERTIME are seeded as platform defaults (company_id=null) by
+     * PayrollConceptCatalogSeeder; a bare query would silently exclude them
+     * once BelongsToCompany's global tenant scope is active, the exact
+     * documented bug that already broke LeaveRecordService in Fase 8 — see
+     * HasPlatformOrCompanyDefault's docblock.
+     *
+     * A missing code here is a platform seeding/configuration failure, not
+     * a per-employee data ambiguity — it deliberately does NOT reuse any of
+     * the six documented blocking exceptions and is never caught by
+     * calculateForEmployee()'s per-employee catch, since it is not
+     * something recalculating this one employee could ever resolve.
+     */
+    private function resolveConceptId(?string $companyId, string $code): string
+    {
+        $concept = PayrollConceptDefinition::query()
+            ->effectiveForCompany($companyId)
+            ->where('code', $code)
+            ->first();
+
+        if ($concept === null) {
+            throw new RuntimeException("No existe una definición de concepto de nómina con código '{$code}' visible para la empresa {$companyId}: verifique que PayrollConceptCatalogSeeder se haya ejecutado.");
+        }
+
+        return $concept->id;
+    }
+
+    /**
+     * Iterates every employee in the period's company and calculates each
+     * one independently, mirroring TimeCalculationEngine::calculateForRange()'s
+     * exact try/catch-and-collect shape: one employee's blocking exception
+     * never aborts the rest of the batch. By the time this method returns,
+     * every employee has either an 'ok' PayrollEntry or a 'blocked' one
+     * persisted in the DB — calculateForEmployee() guarantees the latter via
+     * persistBlockedEntry() before rethrowing, so the blocked row is simply
+     * looked up here rather than recreated.
+     *
+     * @return Collection<int, array{employee_id: string, status: 'ok'|'blocked', entry: ?PayrollEntry, error: ?string}>
+     */
+    public function calculateForPeriod(PayrollPeriod $period): Collection
+    {
+        $employees = Employee::query()->where('company_id', $period->company_id)->get();
+
+        $results = collect();
+
+        foreach ($employees as $employee) {
+            try {
+                $entry = $this->calculateForEmployee($period, $employee);
+
+                $results->push([
+                    'employee_id' => $employee->id,
+                    'status' => 'ok',
+                    'entry' => $entry,
+                    'error' => null,
+                ]);
+            } catch (AmbiguousContractException|AmbiguousSalaryHistoryException|NoActiveLaborRuleVersionException|AmbiguousLaborRuleVersionException|MissingLaborRuleParameterException|NoAttendanceOrNoveltyDataException $e) {
+                $blockedEntry = PayrollEntry::query()
+                    ->where('payroll_period_id', $period->id)
+                    ->where('employee_id', $employee->id)
+                    ->first();
+
+                $results->push([
+                    'employee_id' => $employee->id,
+                    'status' => 'blocked',
+                    'entry' => $blockedEntry,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        return $results;
     }
 }

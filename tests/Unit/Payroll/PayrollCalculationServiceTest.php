@@ -14,12 +14,17 @@ use App\Models\LaborRule;
 use App\Models\LaborRuleVersion;
 use App\Models\NoveltyRecord;
 use App\Models\OvertimeRecord;
+use App\Models\PayrollConceptDefinition;
 use App\Models\PayrollDeductionPlan;
+use App\Models\PayrollEntry;
+use App\Models\PayrollEntryLine;
 use App\Models\PayrollPeriod;
 use App\Models\SalaryHistory;
 use App\Models\Shift;
 use App\Services\Payroll\PayrollCalculationService;
+use App\Services\Tenancy\CurrentCompany;
 use Carbon\CarbonInterface;
+use Database\Seeders\PayrollConceptCatalogSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
@@ -655,5 +660,296 @@ class PayrollCalculationServiceTest extends TestCase
         $this->service->callFixedDeductionLines($this->employee);
 
         $this->assertEqualsWithDelta(400000.0, $plan->fresh()->remaining, 0.0001);
+    }
+
+    private function baseSalaryConceptId(): string
+    {
+        return PayrollConceptDefinition::query()->withoutGlobalScope('company')->whereNull('company_id')->where('code', 'BASE_SALARY')->firstOrFail()->id;
+    }
+
+    private function overtimeConceptId(): string
+    {
+        return PayrollConceptDefinition::query()->withoutGlobalScope('company')->whereNull('company_id')->where('code', 'OVERTIME')->firstOrFail()->id;
+    }
+
+    public function test_calculate_for_employee_produces_a_calculated_entry_with_a_single_base_salary_line_for_the_happy_path()
+    {
+        $this->seed(PayrollConceptCatalogSeeder::class);
+
+        // Full calendar month: rate = 3,100,000 / 30 days, amount over 30
+        // days of coverage collapses back to exactly the monthly salary.
+        $period = $this->period('2026-04-01', '2026-04-30');
+        $contract = $this->contract('2025-01-01', null, 3100000);
+
+        AttendanceRecord::factory()->create([
+            'company_id' => $this->company->id,
+            'employee_id' => $this->employee->id,
+            'date' => '2026-04-05',
+        ]);
+
+        $entry = $this->service->calculateForEmployee($period, $this->employee);
+
+        $this->assertSame('calculated', $entry->status);
+        $this->assertSame($contract->id, $entry->contract_id);
+        $this->assertEqualsWithDelta(3100000.0, (float) $entry->gross_total, 0.01);
+        $this->assertEqualsWithDelta(0.0, (float) $entry->deductions_total, 0.0001);
+        $this->assertEqualsWithDelta(3100000.0, (float) $entry->net_total, 0.01);
+
+        $lines = $entry->lines()->get();
+        $this->assertCount(1, $lines);
+        $this->assertSame('earning', $lines->first()->type);
+        $this->assertSame($this->baseSalaryConceptId(), $lines->first()->concept_id);
+        $this->assertSame($contract->id, $lines->first()->contract_id);
+    }
+
+    public function test_calculate_for_employee_with_authorized_overtime_includes_both_earning_lines_in_gross_total()
+    {
+        $this->seed(PayrollConceptCatalogSeeder::class);
+
+        $period = $this->period('2026-04-01', '2026-04-30');
+        $this->contract('2025-01-01', null, 2400000);
+        $this->laborRuleVersion(['monthly_hours_divisor' => 240, 'overtime_surcharge_pct' => 0.25]);
+
+        AttendanceRecord::factory()->create([
+            'company_id' => $this->company->id,
+            'employee_id' => $this->employee->id,
+            'date' => '2026-04-05',
+        ]);
+
+        $shift = $this->shift('2026-04-10');
+        $this->authorizedOvertimeRecord($shift, 120);
+
+        $entry = $this->service->calculateForEmployee($period, $this->employee);
+
+        // Base salary: 2,400,000 over the full month = 2,400,000 exactly.
+        // Overtime: hourly_rate 10,000 * 1.25 * 2h = 25,000.
+        $this->assertEqualsWithDelta(2425000.0, (float) $entry->gross_total, 0.01);
+        $this->assertEqualsWithDelta(2425000.0, (float) $entry->net_total, 0.01);
+
+        $lines = $entry->lines()->get();
+        $this->assertCount(2, $lines);
+        $this->assertTrue($lines->every(fn (PayrollEntryLine $line): bool => $line->type === 'earning'));
+
+        $overtimeLine = $lines->firstWhere('concept_id', $this->overtimeConceptId());
+        $this->assertNotNull($overtimeLine);
+        $this->assertEqualsWithDelta(25000.0, (float) $overtimeLine->amount, 0.01);
+    }
+
+    public function test_calculate_for_employee_with_a_fixed_deduction_plan_computes_a_correct_net_total()
+    {
+        $this->seed(PayrollConceptCatalogSeeder::class);
+
+        $period = $this->period('2026-04-01', '2026-04-30');
+        $this->contract('2025-01-01', null, 3100000);
+
+        AttendanceRecord::factory()->create([
+            'company_id' => $this->company->id,
+            'employee_id' => $this->employee->id,
+            'date' => '2026-04-05',
+        ]);
+
+        PayrollDeductionPlan::factory()->create([
+            'company_id' => $this->company->id,
+            'employee_id' => $this->employee->id,
+            'total_amount' => 600000,
+            'installments' => 6,
+            'installment_amount' => 100000,
+            'remaining' => 400000,
+        ]);
+
+        $entry = $this->service->calculateForEmployee($period, $this->employee);
+
+        // gross = 3,100,000 (full-month base salary); deduction = min(100000, 400000) = 100,000.
+        $this->assertEqualsWithDelta(3100000.0, (float) $entry->gross_total, 0.01);
+        $this->assertEqualsWithDelta(100000.0, (float) $entry->deductions_total, 0.01);
+        $this->assertEqualsWithDelta(3000000.0, (float) $entry->net_total, 0.01);
+
+        $deductionLines = $entry->lines()->where('type', 'deduction')->get();
+        $this->assertCount(1, $deductionLines);
+        $this->assertEqualsWithDelta(100000.0, (float) $deductionLines->first()->amount, 0.01);
+    }
+
+    public function test_calculate_for_employee_persists_a_blocked_entry_and_rethrows_when_there_is_no_attendance_or_novelty_coverage()
+    {
+        $this->seed(PayrollConceptCatalogSeeder::class);
+
+        $period = $this->period('2026-04-01', '2026-04-30');
+        // Deliberately no AttendanceRecord/NoveltyRecord and no contract —
+        // the coverage guard fires first and blocks before either would
+        // even be needed.
+
+        try {
+            $this->service->calculateForEmployee($period, $this->employee);
+            $this->fail('Expected NoAttendanceOrNoveltyDataException to be thrown.');
+        } catch (NoAttendanceOrNoveltyDataException $exception) {
+            // expected
+        }
+
+        $entry = PayrollEntry::query()
+            ->where('payroll_period_id', $period->id)
+            ->where('employee_id', $this->employee->id)
+            ->first();
+
+        $this->assertNotNull($entry);
+        $this->assertSame('blocked', $entry->status);
+        $this->assertNull($entry->contract_id);
+        $this->assertEqualsWithDelta(0.0, (float) $entry->gross_total, 0.0001);
+        $this->assertEqualsWithDelta(0.0, (float) $entry->deductions_total, 0.0001);
+        $this->assertEqualsWithDelta(0.0, (float) $entry->net_total, 0.0001);
+        $this->assertCount(0, $entry->lines()->get());
+    }
+
+    public function test_calculate_for_period_processes_every_employee_and_never_aborts_the_batch_on_a_blocked_one()
+    {
+        $this->seed(PayrollConceptCatalogSeeder::class);
+
+        $period = $this->period('2026-04-01', '2026-04-30');
+
+        // Employee A (setUp's $this->employee): fully coverable, ends up ok.
+        $this->contract('2025-01-01', null, 3100000);
+        AttendanceRecord::factory()->create([
+            'company_id' => $this->company->id,
+            'employee_id' => $this->employee->id,
+            'date' => '2026-04-05',
+        ]);
+
+        // Employee B: same company, zero attendance/novelty data, blocked.
+        $blockedEmployee = Employee::factory()->create(['company_id' => $this->company->id]);
+
+        $results = $this->service->calculateForPeriod($period);
+
+        $this->assertCount(2, $results);
+
+        $okResult = $results->firstWhere('employee_id', $this->employee->id);
+        $this->assertNotNull($okResult);
+        $this->assertSame('ok', $okResult['status']);
+        $this->assertNotNull($okResult['entry']);
+        $this->assertNull($okResult['error']);
+
+        $blockedResult = $results->firstWhere('employee_id', $blockedEmployee->id);
+        $this->assertNotNull($blockedResult);
+        $this->assertSame('blocked', $blockedResult['status']);
+        $this->assertNotNull($blockedResult['entry']);
+        $this->assertNotNull($blockedResult['error']);
+
+        $this->assertSame('calculated', PayrollEntry::query()
+            ->where('payroll_period_id', $period->id)
+            ->where('employee_id', $this->employee->id)
+            ->firstOrFail()->status);
+
+        $this->assertSame('blocked', PayrollEntry::query()
+            ->where('payroll_period_id', $period->id)
+            ->where('employee_id', $blockedEmployee->id)
+            ->firstOrFail()->status);
+    }
+
+    public function test_recalculating_the_same_employee_and_period_updates_the_single_entry_and_replaces_its_lines_without_duplicating_them()
+    {
+        $this->seed(PayrollConceptCatalogSeeder::class);
+
+        $period = $this->period('2026-04-01', '2026-04-30');
+        $this->contract('2025-01-01', null, 2400000);
+        AttendanceRecord::factory()->create([
+            'company_id' => $this->company->id,
+            'employee_id' => $this->employee->id,
+            'date' => '2026-04-05',
+        ]);
+
+        $firstEntry = $this->service->calculateForEmployee($period, $this->employee);
+        $this->assertEqualsWithDelta(2400000.0, (float) $firstEntry->gross_total, 0.01);
+        $this->assertCount(1, $firstEntry->lines()->get());
+
+        // Underlying data changes before the second recalculation: overtime
+        // gets authorized.
+        $this->laborRuleVersion(['monthly_hours_divisor' => 240, 'overtime_surcharge_pct' => 0.25]);
+        $shift = $this->shift('2026-04-10');
+        $this->authorizedOvertimeRecord($shift, 120);
+
+        $secondEntry = $this->service->calculateForEmployee($period, $this->employee);
+
+        $this->assertSame($firstEntry->id, $secondEntry->id);
+        $this->assertEqualsWithDelta(2425000.0, (float) $secondEntry->gross_total, 0.01);
+
+        $this->assertSame(1, PayrollEntry::query()
+            ->where('payroll_period_id', $period->id)
+            ->where('employee_id', $this->employee->id)
+            ->count());
+
+        // Exactly 2 lines (base salary + overtime), never 3 or 4 — the old
+        // set was fully replaced, not appended to.
+        $this->assertCount(2, $secondEntry->lines()->get());
+    }
+
+    public function test_recalculating_a_previously_blocked_employee_after_coverage_is_added_transitions_it_to_calculated()
+    {
+        $this->seed(PayrollConceptCatalogSeeder::class);
+
+        $period = $this->period('2026-04-01', '2026-04-30');
+        $contract = $this->contract('2025-01-01', null, 3100000);
+
+        try {
+            $this->service->calculateForEmployee($period, $this->employee);
+            $this->fail('Expected NoAttendanceOrNoveltyDataException to be thrown.');
+        } catch (NoAttendanceOrNoveltyDataException $exception) {
+            // expected
+        }
+
+        $blockedEntry = PayrollEntry::query()
+            ->where('payroll_period_id', $period->id)
+            ->where('employee_id', $this->employee->id)
+            ->firstOrFail();
+        $this->assertSame('blocked', $blockedEntry->status);
+        $this->assertNull($blockedEntry->contract_id);
+
+        AttendanceRecord::factory()->create([
+            'company_id' => $this->company->id,
+            'employee_id' => $this->employee->id,
+            'date' => '2026-04-05',
+        ]);
+
+        $recalculatedEntry = $this->service->calculateForEmployee($period, $this->employee);
+
+        $this->assertSame($blockedEntry->id, $recalculatedEntry->id);
+        $this->assertSame('calculated', $recalculatedEntry->status);
+        $this->assertSame($contract->id, $recalculatedEntry->contract_id);
+        $this->assertEqualsWithDelta(3100000.0, (float) $recalculatedEntry->gross_total, 0.01);
+
+        $this->assertSame(1, PayrollEntry::query()
+            ->where('payroll_period_id', $period->id)
+            ->where('employee_id', $this->employee->id)
+            ->count());
+    }
+
+    public function test_platform_default_base_salary_and_overtime_concepts_resolve_correctly_even_with_an_active_tenant_scope()
+    {
+        $this->seed(PayrollConceptCatalogSeeder::class);
+
+        // Fase 8's LeaveRecordService regression: BelongsToCompany's global
+        // scope excludes company_id IS NULL rows once a tenant is active,
+        // silently making platform-default catalog rows unreachable through
+        // a bare ->where('code', ...) query. Activating CurrentCompany here
+        // — never done implicitly by RefreshDatabase alone — is what would
+        // expose that exact regression if PayrollCalculationService ever
+        // stopped using PayrollConceptDefinition::effectiveForCompany().
+        app(CurrentCompany::class)->set($this->company);
+
+        $period = $this->period('2026-04-01', '2026-04-30');
+        $this->contract('2025-01-01', null, 2400000);
+        $this->laborRuleVersion(['monthly_hours_divisor' => 240, 'overtime_surcharge_pct' => 0.25]);
+
+        AttendanceRecord::factory()->create([
+            'company_id' => $this->company->id,
+            'employee_id' => $this->employee->id,
+            'date' => '2026-04-05',
+        ]);
+        $shift = $this->shift('2026-04-10');
+        $this->authorizedOvertimeRecord($shift, 120);
+
+        $entry = $this->service->calculateForEmployee($period, $this->employee);
+
+        $lines = $entry->lines()->get();
+        $this->assertCount(2, $lines);
+        $this->assertTrue($lines->contains('concept_id', $this->baseSalaryConceptId()));
+        $this->assertTrue($lines->contains('concept_id', $this->overtimeConceptId()));
     }
 }
