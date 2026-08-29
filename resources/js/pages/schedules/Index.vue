@@ -119,7 +119,10 @@ function removeDay(index: number) {
                                 }}<span v-if="day.crosses_midnight">
                                     (nocturno)</span
                                 ><span
-                                    v-if="day.break_start_time && day.break_end_time"
+                                    v-if="
+                                        day.break_start_time &&
+                                        day.break_end_time
+                                    "
                                 >
                                     (descanso {{ day.break_start_time }}–{{
                                         day.break_end_time

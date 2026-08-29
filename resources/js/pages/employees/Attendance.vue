@@ -130,7 +130,10 @@ function eventLabel(eventId: string): string {
                         class="border-b border-sidebar-border/40 last:border-0 dark:border-sidebar-border/40"
                     >
                         <td class="p-3">
-                            {{ eventTypeLabels[event.event_type] ?? event.event_type }}
+                            {{
+                                eventTypeLabels[event.event_type] ??
+                                event.event_type
+                            }}
                         </td>
                         <td class="p-3">{{ event.event_datetime }}</td>
                         <td class="p-3">
@@ -262,10 +265,7 @@ function eventLabel(eventId: string): string {
                         <td class="p-3">
                             {{ adjustment.approved_by ?? '—' }}
                         </td>
-                        <td
-                            v-if="canApproveAdjustments"
-                            class="p-3"
-                        >
+                        <td v-if="canApproveAdjustments" class="p-3">
                             <div
                                 v-if="adjustment.status === 'pending'"
                                 class="flex gap-2"
@@ -328,9 +328,7 @@ function eventLabel(eventId: string): string {
             <Heading variant="small" title="Solicitar ajuste" />
 
             <Form
-                v-bind="
-                    AttendanceAdjustmentController.store.form(employee.id)
-                "
+                v-bind="AttendanceAdjustmentController.store.form(employee.id)"
                 reset-on-success
                 v-slot="{ errors, processing }"
                 class="grid gap-4"
@@ -352,7 +350,10 @@ function eventLabel(eventId: string): string {
                 </div>
 
                 <div
-                    v-if="adjustmentType === 'modify' || adjustmentType === 'invalidate'"
+                    v-if="
+                        adjustmentType === 'modify' ||
+                        adjustmentType === 'invalidate'
+                    "
                     class="grid gap-2"
                 >
                     <Label for="original_event_id">Evento original</Label>
@@ -407,17 +408,12 @@ function eventLabel(eventId: string): string {
                             required
                         />
                         <InputError
-                            :message="
-                                errors['corrected_value.event_datetime']
-                            "
+                            :message="errors['corrected_value.event_datetime']"
                         />
                     </div>
                 </template>
 
-                <div
-                    v-if="adjustmentType === 'modify'"
-                    class="grid gap-2"
-                >
+                <div v-if="adjustmentType === 'modify'" class="grid gap-2">
                     <Label for="corrected_event_datetime_modify">
                         Fecha y hora correcta
                     </Label>
@@ -432,10 +428,7 @@ function eventLabel(eventId: string): string {
                     />
                 </div>
 
-                <div
-                    v-if="adjustmentType === 'invalidate'"
-                    class="grid gap-2"
-                >
+                <div v-if="adjustmentType === 'invalidate'" class="grid gap-2">
                     <Label for="corrected_value_reason_code">
                         Motivo de invalidación
                     </Label>
