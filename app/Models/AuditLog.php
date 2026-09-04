@@ -2,6 +2,8 @@
 
 namespace App\Models;
 
+use App\Exceptions\AuditLogImmutableException;
+use App\Models\Builders\AuditLogImmutableBuilder;
 use App\Models\Concerns\BelongsToCompany;
 use Database\Factories\AuditLogFactory;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
@@ -13,6 +15,14 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * Immutable trail of sensitive business actions (.ai/16-AUDIT.md). Rows are
  * only ever inserted through App\Services\Audit\AuditLogger — never updated
  * or deleted by any code path, not even for SUPER_ADMIN.
+ *
+ * Immutability is enforced in two independent layers, replicating (not
+ * reusing) the AttendanceEvent/TimeCalculationRun/PayrollAdjustment/
+ * GeneratedDocument pattern:
+ *   1. Model events (booted() below) reject per-instance update()/delete().
+ *   2. newEloquentBuilder() swaps in AuditLogImmutableBuilder, which rejects
+ *      mass update()/delete() issued directly through the query builder —
+ *      those never fire model events and would otherwise bypass layer 1.
  */
 class AuditLog extends Model
 {
@@ -45,6 +55,25 @@ class AuditLog extends Model
             'old_value' => 'array',
             'new_value' => 'array',
         ];
+    }
+
+    protected static function booted(): void
+    {
+        static::updating(function () {
+            throw new AuditLogImmutableException;
+        });
+
+        static::deleting(function () {
+            throw new AuditLogImmutableException;
+        });
+    }
+
+    /**
+     * @return AuditLogImmutableBuilder<$this>
+     */
+    public function newEloquentBuilder($query): AuditLogImmutableBuilder
+    {
+        return new AuditLogImmutableBuilder($query);
     }
 
     /**
