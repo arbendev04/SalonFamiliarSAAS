@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\AuditLog;
 use App\Models\Company;
 use App\Models\Employee;
 use App\Models\EmployeeSchedule;
@@ -143,6 +144,57 @@ class ScheduleManagementTest extends TestCase
 
         $this->assertSame('2026-02-28', $first->effective_to->toDateString());
         $this->assertNull($second->effective_to);
+    }
+
+    public function test_assigning_a_schedule_with_no_previous_assignment_logs_an_audit_entry_with_no_old_value()
+    {
+        $template = WorkScheduleTemplate::factory()->create(['company_id' => $this->company->id]);
+
+        $this->actingAs($this->owner)->post(route('employees.schedule.store', $this->employee), [
+            'template_id' => $template->id,
+            'effective_from' => '2026-01-01',
+        ])->assertRedirect();
+
+        $schedule = EmployeeSchedule::query()->where('template_id', $template->id)->firstOrFail();
+
+        $auditLog = AuditLog::query()
+            ->where('entity_type', 'employee_schedules')
+            ->where('entity_id', $schedule->id)
+            ->where('action', 'employee_schedule.assigned')
+            ->firstOrFail();
+
+        $this->assertNull($auditLog->old_value);
+        $this->assertSame($template->id, $auditLog->new_value['template_id']);
+        $this->assertSame($this->employee->id, $auditLog->new_value['employee_id']);
+    }
+
+    public function test_reassigning_a_schedule_logs_an_audit_entry_with_the_previous_assignment_as_old_value()
+    {
+        $firstTemplate = WorkScheduleTemplate::factory()->create(['company_id' => $this->company->id]);
+        $secondTemplate = WorkScheduleTemplate::factory()->create(['company_id' => $this->company->id]);
+
+        $this->actingAs($this->owner)->post(route('employees.schedule.store', $this->employee), [
+            'template_id' => $firstTemplate->id,
+            'effective_from' => '2026-01-01',
+        ])->assertRedirect();
+
+        $this->actingAs($this->owner)->post(route('employees.schedule.store', $this->employee), [
+            'template_id' => $secondTemplate->id,
+            'effective_from' => '2026-03-01',
+        ])->assertRedirect();
+
+        $second = EmployeeSchedule::query()->where('template_id', $secondTemplate->id)->firstOrFail();
+
+        $auditLog = AuditLog::query()
+            ->where('entity_type', 'employee_schedules')
+            ->where('entity_id', $second->id)
+            ->where('action', 'employee_schedule.assigned')
+            ->firstOrFail();
+
+        $this->assertSame($firstTemplate->id, $auditLog->old_value['template_id']);
+        $this->assertNull($auditLog->old_value['effective_to']);
+        $this->assertSame($secondTemplate->id, $auditLog->new_value['template_id']);
+        $this->assertSame('2026-03-01', $auditLog->new_value['effective_from']);
     }
 
     public function test_a_template_belonging_to_another_company_cannot_be_assigned()
