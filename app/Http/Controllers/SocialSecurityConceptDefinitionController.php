@@ -5,11 +5,16 @@ namespace App\Http\Controllers;
 use App\Http\Requests\StoreSocialSecurityConceptDefinitionRequest;
 use App\Http\Requests\UpdateSocialSecurityConceptDefinitionRequest;
 use App\Models\SocialSecurityConceptDefinition;
+use App\Models\User;
+use App\Services\Audit\AuditLogger;
 use App\Services\Tenancy\CurrentCompany;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Inertia\Inertia;
 use Inertia\Response;
+use RuntimeException;
 
 class SocialSecurityConceptDefinitionController extends Controller
 {
@@ -38,43 +43,80 @@ class SocialSecurityConceptDefinitionController extends Controller
         ]);
     }
 
-    public function store(StoreSocialSecurityConceptDefinitionRequest $request): RedirectResponse
+    public function store(StoreSocialSecurityConceptDefinitionRequest $request, AuditLogger $auditLogger): RedirectResponse
     {
-        SocialSecurityConceptDefinition::create([
-            ...$request->validated(),
-            // Platform-default concepts (company_id = null) are never
-            // seeded this phase (see composed-knitting-dusk.md). This
-            // endpoint is company-scoped, so it always writes the active
-            // company's id, regardless of what the request contains —
-            // 'company_id' is not even in
-            // StoreSocialSecurityConceptDefinitionRequest::rules(), so it
-            // can never arrive validated.
-            'company_id' => app(CurrentCompany::class)->id(),
-        ]);
+        DB::transaction(function () use ($request, $auditLogger) {
+            $concept = SocialSecurityConceptDefinition::create([
+                ...$request->validated(),
+                // Platform-default concepts (company_id = null) are never
+                // seeded this phase (see composed-knitting-dusk.md). This
+                // endpoint is company-scoped, so it always writes the active
+                // company's id, regardless of what the request contains —
+                // 'company_id' is not even in
+                // StoreSocialSecurityConceptDefinitionRequest::rules(), so it
+                // can never arrive validated.
+                'company_id' => app(CurrentCompany::class)->id(),
+            ]);
+
+            $auditLogger->record(
+                user: $this->resolveActingUser($request),
+                action: 'social_security_concept_definition.created',
+                entityType: 'social_security_concept_definitions',
+                entityId: $concept->id,
+                oldValue: null,
+                newValue: $concept->only($concept->getFillable()),
+            );
+        });
 
         Inertia::flash('toast', ['type' => 'success', 'message' => 'Concepto agregado.']);
 
         return back();
     }
 
-    public function update(UpdateSocialSecurityConceptDefinitionRequest $request, SocialSecurityConceptDefinition $concept): RedirectResponse
+    public function update(UpdateSocialSecurityConceptDefinitionRequest $request, SocialSecurityConceptDefinition $concept, AuditLogger $auditLogger): RedirectResponse
     {
         $this->abortIfNotOwnedByActiveCompany($concept);
 
-        $concept->update($request->validated());
+        DB::transaction(function () use ($request, $concept, $auditLogger) {
+            $oldValue = $concept->only($concept->getFillable());
+
+            $concept->update($request->validated());
+
+            $auditLogger->record(
+                user: $this->resolveActingUser($request),
+                action: 'social_security_concept_definition.updated',
+                entityType: 'social_security_concept_definitions',
+                entityId: $concept->id,
+                oldValue: $oldValue,
+                newValue: $concept->fresh()->only($concept->getFillable()),
+            );
+        });
 
         Inertia::flash('toast', ['type' => 'success', 'message' => 'Concepto actualizado.']);
 
         return back();
     }
 
-    public function destroy(SocialSecurityConceptDefinition $concept): RedirectResponse
+    public function destroy(Request $request, SocialSecurityConceptDefinition $concept, AuditLogger $auditLogger): RedirectResponse
     {
         Gate::authorize('social_security.manage');
 
         $this->abortIfNotOwnedByActiveCompany($concept);
 
-        $concept->delete();
+        DB::transaction(function () use ($request, $concept, $auditLogger) {
+            $oldValue = $concept->only($concept->getFillable());
+
+            $concept->delete();
+
+            $auditLogger->record(
+                user: $this->resolveActingUser($request),
+                action: 'social_security_concept_definition.deleted',
+                entityType: 'social_security_concept_definitions',
+                entityId: $concept->id,
+                oldValue: $oldValue,
+                newValue: null,
+            );
+        });
 
         Inertia::flash('toast', ['type' => 'success', 'message' => 'Concepto eliminado.']);
 
@@ -94,5 +136,21 @@ class SocialSecurityConceptDefinitionController extends Controller
     private function abortIfNotOwnedByActiveCompany(SocialSecurityConceptDefinition $concept): void
     {
         abort_if($concept->company_id !== app(CurrentCompany::class)->id(), 404);
+    }
+
+    /**
+     * Per ADR-018, if the audit write can't happen at all (no resolvable
+     * actor), the whole business transaction must abort rather than
+     * silently proceed without a trail.
+     */
+    private function resolveActingUser(Request $request): User
+    {
+        $user = $request->user();
+
+        if (! $user instanceof User) {
+            throw new RuntimeException('No se pudo determinar el usuario autenticado para auditar la operación sobre el concepto de seguridad social.');
+        }
+
+        return $user;
     }
 }

@@ -5,11 +5,16 @@ namespace App\Http\Controllers;
 use App\Http\Requests\StoreHolidayRequest;
 use App\Http\Requests\UpdateHolidayRequest;
 use App\Models\Holiday;
+use App\Models\User;
+use App\Services\Audit\AuditLogger;
 use App\Services\Tenancy\CurrentCompany;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Inertia\Inertia;
 use Inertia\Response;
+use RuntimeException;
 
 class HolidayController extends Controller
 {
@@ -37,41 +42,78 @@ class HolidayController extends Controller
         ]);
     }
 
-    public function store(StoreHolidayRequest $request): RedirectResponse
+    public function store(StoreHolidayRequest $request, AuditLogger $auditLogger): RedirectResponse
     {
-        Holiday::create([
-            ...$request->validated(),
-            // Platform-default holidays (company_id = null) are seeder-only
-            // (see ColombianHolidaySeeder). This endpoint is company-scoped,
-            // so it always writes the active company's id, regardless of
-            // what the request contains — 'company_id' is not even in
-            // StoreHolidayRequest::rules(), so it can never arrive validated.
-            'company_id' => app(CurrentCompany::class)->id(),
-        ]);
+        DB::transaction(function () use ($request, $auditLogger) {
+            $holiday = Holiday::create([
+                ...$request->validated(),
+                // Platform-default holidays (company_id = null) are seeder-only
+                // (see ColombianHolidaySeeder). This endpoint is company-scoped,
+                // so it always writes the active company's id, regardless of
+                // what the request contains — 'company_id' is not even in
+                // StoreHolidayRequest::rules(), so it can never arrive validated.
+                'company_id' => app(CurrentCompany::class)->id(),
+            ]);
+
+            $auditLogger->record(
+                user: $this->resolveActingUser($request),
+                action: 'holiday.created',
+                entityType: 'holidays',
+                entityId: $holiday->id,
+                oldValue: null,
+                newValue: $holiday->only($holiday->getFillable()),
+            );
+        });
 
         Inertia::flash('toast', ['type' => 'success', 'message' => 'Festivo agregado.']);
 
         return back();
     }
 
-    public function update(UpdateHolidayRequest $request, Holiday $holiday): RedirectResponse
+    public function update(UpdateHolidayRequest $request, Holiday $holiday, AuditLogger $auditLogger): RedirectResponse
     {
         $this->abortIfNotOwnedByActiveCompany($holiday);
 
-        $holiday->update($request->validated());
+        DB::transaction(function () use ($request, $holiday, $auditLogger) {
+            $oldValue = $holiday->only($holiday->getFillable());
+
+            $holiday->update($request->validated());
+
+            $auditLogger->record(
+                user: $this->resolveActingUser($request),
+                action: 'holiday.updated',
+                entityType: 'holidays',
+                entityId: $holiday->id,
+                oldValue: $oldValue,
+                newValue: $holiday->fresh()->only($holiday->getFillable()),
+            );
+        });
 
         Inertia::flash('toast', ['type' => 'success', 'message' => 'Festivo actualizado.']);
 
         return back();
     }
 
-    public function destroy(Holiday $holiday): RedirectResponse
+    public function destroy(Request $request, Holiday $holiday, AuditLogger $auditLogger): RedirectResponse
     {
         Gate::authorize('holidays.write');
 
         $this->abortIfNotOwnedByActiveCompany($holiday);
 
-        $holiday->delete();
+        DB::transaction(function () use ($request, $holiday, $auditLogger) {
+            $oldValue = $holiday->only($holiday->getFillable());
+
+            $holiday->delete();
+
+            $auditLogger->record(
+                user: $this->resolveActingUser($request),
+                action: 'holiday.deleted',
+                entityType: 'holidays',
+                entityId: $holiday->id,
+                oldValue: $oldValue,
+                newValue: null,
+            );
+        });
 
         Inertia::flash('toast', ['type' => 'success', 'message' => 'Festivo eliminado.']);
 
@@ -111,5 +153,21 @@ class HolidayController extends Controller
     private function abortIfNotOwnedByActiveCompany(Holiday $holiday): void
     {
         abort_if($holiday->company_id !== app(CurrentCompany::class)->id(), 404);
+    }
+
+    /**
+     * Per ADR-018, if the audit write can't happen at all (no resolvable
+     * actor), the whole business transaction must abort rather than
+     * silently proceed without a trail.
+     */
+    private function resolveActingUser(Request $request): User
+    {
+        $user = $request->user();
+
+        if (! $user instanceof User) {
+            throw new RuntimeException('No se pudo determinar el usuario autenticado para auditar la operación sobre el festivo.');
+        }
+
+        return $user;
     }
 }

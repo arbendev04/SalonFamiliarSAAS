@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\SocialSecurity;
 
+use App\Models\AuditLog;
 use App\Models\Company;
 use App\Models\Role;
 use App\Models\SocialSecurityConceptDefinition;
@@ -71,6 +72,12 @@ class SocialSecurityConceptDefinitionControllerTest extends TestCase
         $concept = SocialSecurityConceptDefinition::query()->where('code', 'NEW-01')->firstOrFail();
 
         $this->assertSame($this->company->id, $concept->company_id);
+
+        $this->assertDatabaseHas('audit_logs', [
+            'action' => 'social_security_concept_definition.created',
+            'entity_type' => 'social_security_concept_definitions',
+            'entity_id' => $concept->id,
+        ]);
     }
 
     public function test_updating_the_companys_own_concept_succeeds()
@@ -84,6 +91,15 @@ class SocialSecurityConceptDefinitionControllerTest extends TestCase
         ])->assertRedirect()->assertSessionHasNoErrors();
 
         $this->assertSame('Nombre nuevo', $concept->fresh()->name);
+
+        $auditLog = AuditLog::query()
+            ->where('entity_type', 'social_security_concept_definitions')
+            ->where('entity_id', $concept->id)
+            ->where('action', 'social_security_concept_definition.updated')
+            ->firstOrFail();
+
+        $this->assertSame('Nombre viejo', $auditLog->old_value['name']);
+        $this->assertSame('Nombre nuevo', $auditLog->new_value['name']);
     }
 
     public function test_deleting_the_companys_own_concept_soft_deletes_it()
@@ -94,6 +110,14 @@ class SocialSecurityConceptDefinitionControllerTest extends TestCase
             ->assertRedirect()->assertSessionHasNoErrors();
 
         $this->assertSoftDeleted($concept);
+
+        $auditLog = AuditLog::query()
+            ->where('entity_type', 'social_security_concept_definitions')
+            ->where('entity_id', $concept->id)
+            ->where('action', 'social_security_concept_definition.deleted')
+            ->firstOrFail();
+
+        $this->assertNull($auditLog->new_value);
     }
 
     public function test_updating_a_platform_default_concept_is_rejected()

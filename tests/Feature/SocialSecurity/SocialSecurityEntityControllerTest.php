@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\SocialSecurity;
 
+use App\Models\AuditLog;
 use App\Models\Company;
 use App\Models\Role;
 use App\Models\SocialSecurityEntity;
@@ -71,6 +72,12 @@ class SocialSecurityEntityControllerTest extends TestCase
         $entity = SocialSecurityEntity::query()->where('code', 'NEW-01')->firstOrFail();
 
         $this->assertSame($this->company->id, $entity->company_id);
+
+        $this->assertDatabaseHas('audit_logs', [
+            'action' => 'social_security_entity.created',
+            'entity_type' => 'social_security_entities',
+            'entity_id' => $entity->id,
+        ]);
     }
 
     public function test_updating_the_companys_own_entity_succeeds()
@@ -84,6 +91,15 @@ class SocialSecurityEntityControllerTest extends TestCase
         ])->assertRedirect()->assertSessionHasNoErrors();
 
         $this->assertSame('Nombre nuevo', $entity->fresh()->name);
+
+        $auditLog = AuditLog::query()
+            ->where('entity_type', 'social_security_entities')
+            ->where('entity_id', $entity->id)
+            ->where('action', 'social_security_entity.updated')
+            ->firstOrFail();
+
+        $this->assertSame('Nombre viejo', $auditLog->old_value['name']);
+        $this->assertSame('Nombre nuevo', $auditLog->new_value['name']);
     }
 
     public function test_deleting_the_companys_own_entity_soft_deletes_it()
@@ -94,6 +110,14 @@ class SocialSecurityEntityControllerTest extends TestCase
             ->assertRedirect()->assertSessionHasNoErrors();
 
         $this->assertSoftDeleted($entity);
+
+        $auditLog = AuditLog::query()
+            ->where('entity_type', 'social_security_entities')
+            ->where('entity_id', $entity->id)
+            ->where('action', 'social_security_entity.deleted')
+            ->firstOrFail();
+
+        $this->assertNull($auditLog->new_value);
     }
 
     public function test_updating_a_platform_default_entity_is_rejected()

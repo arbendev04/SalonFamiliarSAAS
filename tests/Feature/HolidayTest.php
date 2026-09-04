@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\AuditLog;
 use App\Models\Company;
 use App\Models\Holiday;
 use App\Models\Role;
@@ -69,6 +70,12 @@ class HolidayTest extends TestCase
         $holiday = Holiday::query()->where('name', 'Festivo Local')->firstOrFail();
 
         $this->assertSame($this->company->id, $holiday->company_id);
+
+        $this->assertDatabaseHas('audit_logs', [
+            'action' => 'holiday.created',
+            'entity_type' => 'holidays',
+            'entity_id' => $holiday->id,
+        ]);
     }
 
     public function test_updating_a_companys_own_holiday_succeeds()
@@ -81,6 +88,15 @@ class HolidayTest extends TestCase
         ])->assertRedirect()->assertSessionHasNoErrors();
 
         $this->assertSame('Nombre Nuevo', $holiday->fresh()->name);
+
+        $auditLog = AuditLog::query()
+            ->where('entity_type', 'holidays')
+            ->where('entity_id', $holiday->id)
+            ->where('action', 'holiday.updated')
+            ->firstOrFail();
+
+        $this->assertSame('Nombre Viejo', $auditLog->old_value['name']);
+        $this->assertSame('Nombre Nuevo', $auditLog->new_value['name']);
     }
 
     public function test_deleting_a_companys_own_holiday_soft_deletes_it()
@@ -91,6 +107,14 @@ class HolidayTest extends TestCase
             ->assertRedirect()->assertSessionHasNoErrors();
 
         $this->assertSoftDeleted($holiday);
+
+        $auditLog = AuditLog::query()
+            ->where('entity_type', 'holidays')
+            ->where('entity_id', $holiday->id)
+            ->where('action', 'holiday.deleted')
+            ->firstOrFail();
+
+        $this->assertNull($auditLog->new_value);
     }
 
     public function test_updating_a_platform_default_holiday_is_rejected()
