@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\MorphMany;
 
 /**
  * A single employee's settlement within a payroll_period. Per
@@ -89,5 +90,21 @@ class PayrollEntry extends Model
     public function socialSecurityContributions(): HasMany
     {
         return $this->hasMany(SocialSecurityContribution::class);
+    }
+
+    /**
+     * @return HasMany<PayrollAdjustment, $this>
+     */
+    public function payrollAdjustments(): HasMany
+    {
+        return $this->hasMany(PayrollAdjustment::class);
+    }
+
+    /**
+     * @return MorphMany<GeneratedDocument, $this>
+     */
+    public function generatedDocuments(): MorphMany
+    {
+        return $this->morphMany(GeneratedDocument::class, 'reference_entity');
     }
 }

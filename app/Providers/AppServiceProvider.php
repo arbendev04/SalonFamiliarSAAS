@@ -2,9 +2,11 @@
 
 namespace App\Providers;
 
+use App\Models\PayrollEntry;
 use App\Models\User;
 use App\Services\Tenancy\CurrentCompany;
 use Carbon\CarbonImmutable;
+use Illuminate\Database\Eloquent\Relations\Relation;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
@@ -28,6 +30,20 @@ class AppServiceProvider extends ServiceProvider
     {
         $this->configureDefaults();
         $this->configureAuthorization();
+        $this->configureMorphMap();
+    }
+
+    /**
+     * Maps the `reference_entity_type` string stored on generated_documents
+     * (.ai/14-PDF.md) to its model class, instead of leaking the fully
+     * qualified class name into the database. Only `payroll_entry` exists
+     * today; POST-MVP document types extend this map, they don't replace it.
+     */
+    protected function configureMorphMap(): void
+    {
+        Relation::enforceMorphMap([
+            'payroll_entry' => PayrollEntry::class,
+        ]);
     }
 
     /**
