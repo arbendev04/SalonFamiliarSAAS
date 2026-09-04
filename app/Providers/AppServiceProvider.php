@@ -4,6 +4,8 @@ namespace App\Providers;
 
 use App\Models\PayrollEntry;
 use App\Models\User;
+use App\Services\Pdf\Contracts\PdfGenerator;
+use App\Services\Pdf\DompdfPdfGenerator;
 use App\Services\Tenancy\CurrentCompany;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Relations\Relation;
@@ -21,6 +23,8 @@ class AppServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->app->scoped(CurrentCompany::class);
+
+        $this->app->bind(PdfGenerator::class, DompdfPdfGenerator::class);
     }
 
     /**
