@@ -7,6 +7,7 @@ use App\Http\Controllers\BranchController;
 use App\Http\Controllers\EmployeeController;
 use App\Http\Controllers\EmployeeScheduleController;
 use App\Http\Controllers\EmploymentContractController;
+use App\Http\Controllers\GeneratedDocumentController;
 use App\Http\Controllers\HolidayController;
 use App\Http\Controllers\LaborRuleVersionController;
 use App\Http\Controllers\LeaveRecordController;
@@ -93,6 +94,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::post('payroll/periods/{period}/close', [PayrollPeriodController::class, 'close'])->name('payroll.periods.close');
     Route::post('payroll/periods/{period}/reopen', [PayrollPeriodController::class, 'reopen'])->name('payroll.periods.reopen');
     Route::post('payroll/entries/{entry}/adjustments', [PayrollAdjustmentController::class, 'store'])->name('payroll.entries.adjustments.store');
+    Route::get('payroll/entries/{entry}/receipts/{document}', [GeneratedDocumentController::class, 'download'])->name('payroll.entries.receipts.download');
 
     Route::get('employees/{employee}/deduction-plans', [PayrollDeductionPlanController::class, 'index'])->name('employees.deduction-plans.index');
     Route::post('employees/{employee}/deduction-plans', [PayrollDeductionPlanController::class, 'store'])->name('employees.deduction-plans.store');

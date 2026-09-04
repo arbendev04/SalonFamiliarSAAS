@@ -73,6 +73,7 @@ class PayrollPeriodController extends Controller
             ->with([
                 'employee',
                 'lines.concept' => fn ($query) => $query->withoutGlobalScope('company'),
+                'generatedDocuments' => fn ($query) => $query->orderByDesc('version'),
             ])
             ->get();
 
@@ -108,6 +109,11 @@ class PayrollPeriodController extends Controller
                     'quantity' => $line->quantity,
                     'rate' => $line->rate,
                     'amount' => $line->amount,
+                ]),
+                'generated_documents' => $entry->generatedDocuments->map(fn ($document) => [
+                    'id' => $document->id,
+                    'version' => $document->version,
+                    'generated_at' => $document->generated_at->toDateTimeString(),
                 ]),
             ]),
             'canCalculate' => Gate::allows('payroll.calculate'),

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { Form, Head } from '@inertiajs/vue3';
+import GeneratedDocumentController from '@/actions/App/Http/Controllers/GeneratedDocumentController';
 import PayrollAdjustmentController from '@/actions/App/Http/Controllers/PayrollAdjustmentController';
 import PayrollPeriodController from '@/actions/App/Http/Controllers/PayrollPeriodController';
 import Heading from '@/components/Heading.vue';
@@ -29,6 +30,12 @@ type PayrollEntryLineRow = {
     amount: string;
 };
 
+type GeneratedDocumentRow = {
+    id: string;
+    version: number;
+    generated_at: string;
+};
+
 type PayrollEntryRow = {
     id: string;
     employee: { id: string; full_name: string };
@@ -38,6 +45,7 @@ type PayrollEntryRow = {
     deductions_total: string;
     net_total: string;
     lines: PayrollEntryLineRow[];
+    generated_documents: GeneratedDocumentRow[];
 };
 
 type ConceptOption = {
@@ -188,6 +196,7 @@ const periodTypeLabels: Record<string, string> = {
                         <th class="p-3 font-medium">Devengado</th>
                         <th class="p-3 font-medium">Deducido</th>
                         <th class="p-3 font-medium">Neto</th>
+                        <th class="p-3 font-medium">Comprobantes</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -202,6 +211,49 @@ const periodTypeLabels: Record<string, string> = {
                             <td class="p-3">{{ entry.gross_total }}</td>
                             <td class="p-3">{{ entry.deductions_total }}</td>
                             <td class="p-3">{{ entry.net_total }}</td>
+                            <td class="p-3">
+                                <span
+                                    v-if="
+                                        entry.generated_documents.length === 0
+                                    "
+                                    class="text-muted-foreground"
+                                >
+                                    —
+                                </span>
+                                <a
+                                    v-else-if="
+                                        entry.generated_documents.length === 1
+                                    "
+                                    :href="
+                                        GeneratedDocumentController.download.url(
+                                            [
+                                                entry.id,
+                                                entry.generated_documents[0].id,
+                                            ],
+                                        )
+                                    "
+                                    class="text-primary underline"
+                                >
+                                    Descargar
+                                </a>
+                                <ul v-else class="space-y-1">
+                                    <li
+                                        v-for="document in entry.generated_documents"
+                                        :key="document.id"
+                                    >
+                                        <a
+                                            :href="
+                                                GeneratedDocumentController.download.url(
+                                                    [entry.id, document.id],
+                                                )
+                                            "
+                                            class="text-primary underline"
+                                        >
+                                            v{{ document.version }}
+                                        </a>
+                                    </li>
+                                </ul>
+                            </td>
                         </tr>
                         <tr
                             v-for="line in entry.lines"
@@ -215,13 +267,13 @@ const periodTypeLabels: Record<string, string> = {
                                 {{ line.quantity ?? '—' }} x
                                 {{ line.rate ?? '—' }}
                             </td>
-                            <td class="p-3">{{ line.amount }}</td>
+                            <td class="p-3" colspan="2">{{ line.amount }}</td>
                         </tr>
                         <tr
                             v-if="entry.status === 'blocked'"
                             class="border-b border-sidebar-border/20 last:border-0 dark:border-sidebar-border/20"
                         >
-                            <td class="p-3 pl-6 text-destructive" colspan="5">
+                            <td class="p-3 pl-6 text-destructive" colspan="6">
                                 Entrada bloqueada — revise los datos del
                                 empleado y recalcule.
                             </td>
@@ -230,7 +282,7 @@ const periodTypeLabels: Record<string, string> = {
                             v-if="canAdjust && period.status === 'closed'"
                             class="border-b border-sidebar-border/40 last:border-0 dark:border-sidebar-border/40"
                         >
-                            <td class="p-3 pl-6" colspan="5">
+                            <td class="p-3 pl-6" colspan="6">
                                 <Form
                                     v-bind="
                                         PayrollAdjustmentController.store.form(
@@ -308,7 +360,7 @@ const periodTypeLabels: Record<string, string> = {
                         </tr>
                     </template>
                     <tr v-if="entries.length === 0">
-                        <td class="p-3 text-muted-foreground" colspan="5">
+                        <td class="p-3 text-muted-foreground" colspan="6">
                             Todavía no hay entradas calculadas para este
                             periodo.
                         </td>
