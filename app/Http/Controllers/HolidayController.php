@@ -61,7 +61,7 @@ class HolidayController extends Controller
                 entityType: 'holidays',
                 entityId: $holiday->id,
                 oldValue: null,
-                newValue: $holiday->only($holiday->getFillable()),
+                newValue: $this->fillableSnapshot($holiday),
             );
         });
 
@@ -75,7 +75,7 @@ class HolidayController extends Controller
         $this->abortIfNotOwnedByActiveCompany($holiday);
 
         DB::transaction(function () use ($request, $holiday, $auditLogger) {
-            $oldValue = $holiday->only($holiday->getFillable());
+            $oldValue = $this->fillableSnapshot($holiday);
 
             $holiday->update($request->validated());
 
@@ -85,7 +85,7 @@ class HolidayController extends Controller
                 entityType: 'holidays',
                 entityId: $holiday->id,
                 oldValue: $oldValue,
-                newValue: $holiday->fresh()->only($holiday->getFillable()),
+                newValue: $this->fillableSnapshot($holiday->fresh()),
             );
         });
 
@@ -101,7 +101,7 @@ class HolidayController extends Controller
         $this->abortIfNotOwnedByActiveCompany($holiday);
 
         DB::transaction(function () use ($request, $holiday, $auditLogger) {
-            $oldValue = $holiday->only($holiday->getFillable());
+            $oldValue = $this->fillableSnapshot($holiday);
 
             $holiday->delete();
 
@@ -153,6 +153,20 @@ class HolidayController extends Controller
     private function abortIfNotOwnedByActiveCompany(Holiday $holiday): void
     {
         abort_if($holiday->company_id !== app(CurrentCompany::class)->id(), 404);
+    }
+
+    /**
+     * Fillable-attribute snapshot for the audit trail, taken via toArray()
+     * rather than only() so the 'date:Y-m-d' cast on the date field
+     * serializes to a plain date string instead of leaking a raw Carbon
+     * instance (which only() -> getAttribute() would return) into the JSON
+     * old_value/new_value columns.
+     *
+     * @return array<string, mixed>
+     */
+    private function fillableSnapshot(Holiday $holiday): array
+    {
+        return array_intersect_key($holiday->toArray(), array_flip($holiday->getFillable()));
     }
 
     /**

@@ -80,10 +80,14 @@ class HolidayTest extends TestCase
 
     public function test_updating_a_companys_own_holiday_succeeds()
     {
-        $holiday = Holiday::factory()->create(['company_id' => $this->company->id, 'name' => 'Nombre Viejo']);
+        $holiday = Holiday::factory()->create([
+            'company_id' => $this->company->id,
+            'name' => 'Nombre Viejo',
+            'date' => '2026-01-01',
+        ]);
 
         $this->actingAs($this->owner)->put(route('holidays.update', $holiday), [
-            'date' => $holiday->date->format('Y-m-d'),
+            'date' => '2026-12-25',
             'name' => 'Nombre Nuevo',
         ])->assertRedirect()->assertSessionHasNoErrors();
 
@@ -97,6 +101,13 @@ class HolidayTest extends TestCase
 
         $this->assertSame('Nombre Viejo', $auditLog->old_value['name']);
         $this->assertSame('Nombre Nuevo', $auditLog->new_value['name']);
+
+        // The 'date' column is cast as 'date:Y-m-d'. The audit snapshot must
+        // respect that cast format, not leak a raw Carbon-serialized
+        // ISO-8601 timestamp (e.g. "2026-01-01T00:00:00.000000Z") into the
+        // old_value/new_value JSON columns.
+        $this->assertSame('2026-01-01', $auditLog->old_value['date']);
+        $this->assertSame('2026-12-25', $auditLog->new_value['date']);
     }
 
     public function test_deleting_a_companys_own_holiday_soft_deletes_it()
