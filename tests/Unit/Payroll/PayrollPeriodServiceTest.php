@@ -8,6 +8,8 @@ use App\Models\AuditLog;
 use App\Models\Company;
 use App\Models\Employee;
 use App\Models\EmploymentContract;
+use App\Models\GeneratedDocument;
+use App\Models\PayrollConceptDefinition;
 use App\Models\PayrollDeductionPlan;
 use App\Models\PayrollEntry;
 use App\Models\PayrollEntryLine;
@@ -16,6 +18,7 @@ use App\Models\User;
 use App\Services\Payroll\PayrollPeriodService;
 use App\Services\Tenancy\CurrentCompany;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Storage;
 use InvalidArgumentException;
 use Tests\TestCase;
 
@@ -361,5 +364,66 @@ class PayrollPeriodServiceTest extends TestCase
         // plan's remaining must still reflect only the first, successful
         // close(), never a second consumption of the same line.
         $this->assertEqualsWithDelta(300000.0, (float) $plan->fresh()->remaining, 0.0001);
+    }
+
+    // ----------------------------------------------------------------
+    // close(): payroll receipt generation (Fase 11, commit 6)
+    // ----------------------------------------------------------------
+
+    public function test_close_generates_exactly_one_version_one_generated_document_per_entry(): void
+    {
+        Storage::fake();
+
+        $period = $this->period('calculated');
+
+        $concept = PayrollConceptDefinition::factory()->create([
+            'company_id' => $this->company->id,
+            'type' => 'earning',
+        ]);
+
+        $entries = collect();
+
+        for ($i = 0; $i < 3; $i++) {
+            $employee = Employee::factory()->create(['company_id' => $this->company->id]);
+            $contract = EmploymentContract::factory()->create([
+                'company_id' => $this->company->id,
+                'employee_id' => $employee->id,
+            ]);
+
+            $entry = PayrollEntry::factory()->create([
+                'company_id' => $this->company->id,
+                'payroll_period_id' => $period->id,
+                'employee_id' => $employee->id,
+                'contract_id' => $contract->id,
+                'status' => 'calculated',
+            ]);
+
+            PayrollEntryLine::factory()->create([
+                'company_id' => $this->company->id,
+                'payroll_entry_id' => $entry->id,
+                'concept_id' => $concept->id,
+                'contract_id' => $contract->id,
+                'type' => 'earning',
+                'quantity' => null,
+                'rate' => null,
+                'amount' => 100000,
+            ]);
+
+            $entries->push($entry);
+        }
+
+        $this->service->close($period, $this->actor);
+
+        $this->assertSame(3, GeneratedDocument::query()->where('type', 'payroll_receipt')->count());
+
+        foreach ($entries as $entry) {
+            $documents = GeneratedDocument::query()
+                ->where('reference_entity_type', 'payroll_entry')
+                ->where('reference_entity_id', $entry->id)
+                ->get();
+
+            $this->assertCount(1, $documents);
+            $this->assertSame(1, $documents->first()->version);
+        }
     }
 }

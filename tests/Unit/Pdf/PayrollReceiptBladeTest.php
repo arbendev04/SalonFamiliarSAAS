@@ -78,7 +78,7 @@ class PayrollReceiptBladeTest extends TestCase
             'version' => 2,
         ]);
 
-        $html = view('pdf.payroll-receipt', ['data' => $data])->render();
+        $html = view('pdf.payroll-receipt', $data)->render();
 
         // Company / branch header
         $this->assertStringContainsString('Salón Familiar SAS', $html);
@@ -126,7 +126,7 @@ class PayrollReceiptBladeTest extends TestCase
             'generated_at' => '2026-08-15 09:00:00',
         ]);
 
-        $html = view('pdf.payroll-receipt', ['data' => $data])->render();
+        $html = view('pdf.payroll-receipt', $data)->render();
 
         $this->assertStringContainsString('Salón Familiar SAS', $html);
         $this->assertStringNotContainsString('Sede Norte', $html);

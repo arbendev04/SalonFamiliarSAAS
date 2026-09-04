@@ -10,8 +10,11 @@ use App\Models\PayrollEntryLine;
 use App\Models\PayrollPeriod;
 use App\Models\User;
 use App\Services\Audit\AuditLogger;
+use App\Services\Pdf\PayrollReceiptService;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
+use Throwable;
 
 /**
  * The period-level state machine wrapping PayrollCalculationService's
@@ -31,6 +34,7 @@ class PayrollPeriodService
     public function __construct(
         private readonly AuditLogger $auditLogger,
         private readonly PayrollCalculationService $calculationService,
+        private readonly PayrollReceiptService $receiptService,
     ) {}
 
     /**
@@ -159,7 +163,7 @@ class PayrollPeriodService
 
         $oldStatus = $period->status;
 
-        return DB::transaction(function () use ($period, $closedBy, $oldStatus): PayrollPeriod {
+        $period = DB::transaction(function () use ($period, $closedBy, $oldStatus): PayrollPeriod {
             $deductionLines = PayrollEntryLine::query()
                 ->where('type', 'deduction')
                 ->whereNotNull('deduction_plan_id')
@@ -197,6 +201,73 @@ class PayrollPeriodService
 
             return $period;
         });
+
+        $this->generateReceiptsForClosedPeriod($period, $closedBy);
+
+        return $period;
+    }
+
+    /**
+     * Regenerates every payroll_entry's PDF receipt for a just-closed period
+     * (.ai/14-PDF.md), per the plan's confirmed design: EVERY close() —
+     * whether it is the period's first close() or a subsequent one after
+     * reopen() -> free recalculation -> recordReopenCorrection() ->
+     * close() again — unconditionally walks every current PayrollEntry and
+     * calls PayrollReceiptService::generate() for it. That method itself
+     * always resolves the next version via MAX(version)+1 per entry, so v1
+     * on the first close() and v2 on a reopen+correct+reclose fall out of
+     * this single, branch-free loop with no special-casing for "is this a
+     * reclose" — see the plan's "Wiring en el cierre de periodo" section.
+     *
+     * Deliberately called AFTER the close() transaction above has already
+     * committed, never nested inside it — same placement rationale as
+     * AttendanceAdjustmentService::triggerRecalculationForApprovedAdjustment().
+     * The close() transaction (status flip to 'closed', the deduction-plan
+     * decrements, the mandatory AuditLogger::record() call) is the durable
+     * source of truth per .ai/10-PAYROLL.md; a receipt is a derived artifact
+     * materializing what that transaction already committed, not part of it.
+     * Generating it inside the same transaction would let a PDF
+     * rendering/storage failure roll back — or, if nested as a savepoint,
+     * put at risk — a close() that has nothing to do with PDF rendering at
+     * all.
+     *
+     * The catch here is `\Throwable`, deliberately broader than
+     * triggerRecalculationForApprovedAdjustment()'s narrow list of four named
+     * TimeCalculationEngine exceptions. That precedent can afford a narrow
+     * list because TimeCalculationEngine documents its blocking failure
+     * modes explicitly and exhaustively. Receipt generation's failure modes
+     * are heterogeneous by construction: PayrollReceiptService::generate()
+     * itself can throw MissingRequiredReceiptDataException (no lines) or
+     * InvalidPayrollPeriodStatusException (defensive, should be unreachable
+     * here since $period was just closed), but the PdfGenerator it calls can
+     * also throw on a dompdf rendering failure, and Storage::put() can throw
+     * on a storage-driver I/O failure — none of which are enumerable ahead of
+     * time the way TimeCalculationEngine's are. None of them may ever be
+     * allowed to undo an already-committed close(): one employee's
+     * corrupted/missing data or a transient storage outage must never block
+     * every other employee's receipt, nor retroactively fail a close() that
+     * has already returned successfully to its caller. Trading a narrower
+     * catch-list for "close() always succeeds once its own transaction
+     * commits" is the deliberate, documented deviation from that precedent.
+     */
+    private function generateReceiptsForClosedPeriod(PayrollPeriod $period, User $closedBy): void
+    {
+        $entries = PayrollEntry::query()
+            ->where('payroll_period_id', $period->id)
+            ->get();
+
+        foreach ($entries as $entry) {
+            try {
+                $this->receiptService->generate($entry, $closedBy);
+            } catch (Throwable $e) {
+                Log::warning('Payroll receipt generation skipped after period close: '.$e->getMessage(), [
+                    'payroll_period_id' => $period->id,
+                    'payroll_entry_id' => $entry->id,
+                    'employee_id' => $entry->employee_id,
+                    'exception' => $e::class,
+                ]);
+            }
+        }
     }
 
     /**
