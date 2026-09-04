@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\AuditLog;
 use App\Models\Branch;
 use App\Models\Company;
 use App\Models\Role;
@@ -50,6 +51,12 @@ class BranchTest extends TestCase
 
         $this->assertSame($this->company->id, $branch->company_id);
         $this->assertSame('America/Bogota', $branch->timezone);
+
+        $this->assertDatabaseHas('audit_logs', [
+            'action' => 'branch.created',
+            'entity_type' => 'branches',
+            'entity_id' => $branch->id,
+        ]);
     }
 
     public function test_a_user_only_sees_branches_from_their_own_company()
@@ -79,6 +86,15 @@ class BranchTest extends TestCase
         ])->assertRedirect()->assertSessionHasNoErrors();
 
         $this->assertSame('Sede Nueva', $branch->fresh()->name);
+
+        $auditLog = AuditLog::query()
+            ->where('entity_type', 'branches')
+            ->where('entity_id', $branch->id)
+            ->where('action', 'branch.updated')
+            ->firstOrFail();
+
+        $this->assertSame('Sede Vieja', $auditLog->old_value['name']);
+        $this->assertSame('Sede Nueva', $auditLog->new_value['name']);
     }
 
     public function test_a_branch_belonging_to_another_company_cannot_be_updated()
@@ -108,6 +124,14 @@ class BranchTest extends TestCase
             ->assertRedirect()->assertSessionHasNoErrors();
 
         $this->assertSoftDeleted($branch);
+
+        $auditLog = AuditLog::query()
+            ->where('entity_type', 'branches')
+            ->where('entity_id', $branch->id)
+            ->where('action', 'branch.deleted')
+            ->firstOrFail();
+
+        $this->assertNull($auditLog->new_value);
     }
 
     public function test_a_user_without_the_branches_write_permission_is_denied()

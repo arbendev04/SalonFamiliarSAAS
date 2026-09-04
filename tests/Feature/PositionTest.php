@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\AuditLog;
 use App\Models\Company;
 use App\Models\Position;
 use App\Models\Role;
@@ -51,6 +52,12 @@ class PositionTest extends TestCase
 
         $this->assertSame($this->company->id, $position->company_id);
         $this->assertSame('Panadero', $position->title);
+
+        $this->assertDatabaseHas('audit_logs', [
+            'action' => 'position.created',
+            'entity_type' => 'positions',
+            'entity_id' => $position->id,
+        ]);
     }
 
     public function test_a_user_only_sees_positions_from_their_own_company()
@@ -81,6 +88,15 @@ class PositionTest extends TestCase
         ])->assertRedirect()->assertSessionHasNoErrors();
 
         $this->assertSame('Vendedor Senior', $position->fresh()->title);
+
+        $auditLog = AuditLog::query()
+            ->where('entity_type', 'positions')
+            ->where('entity_id', $position->id)
+            ->where('action', 'position.updated')
+            ->firstOrFail();
+
+        $this->assertSame('Vendedor', $auditLog->old_value['title']);
+        $this->assertSame('Vendedor Senior', $auditLog->new_value['title']);
     }
 
     public function test_a_position_belonging_to_another_company_cannot_be_updated()
@@ -110,6 +126,14 @@ class PositionTest extends TestCase
             ->assertRedirect()->assertSessionHasNoErrors();
 
         $this->assertSoftDeleted($position);
+
+        $auditLog = AuditLog::query()
+            ->where('entity_type', 'positions')
+            ->where('entity_id', $position->id)
+            ->where('action', 'position.deleted')
+            ->firstOrFail();
+
+        $this->assertNull($auditLog->new_value);
     }
 
     public function test_a_user_without_the_positions_write_permission_is_denied()
