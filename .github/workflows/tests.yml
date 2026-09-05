@@ -67,3 +67,9 @@ jobs:
 
       - name: Run CI Checks
         run: composer ci:check
+
+      - name: Coverage gate — global 80%
+        run: composer test:coverage
+
+      - name: Coverage gate — critical modules 90%
+        run: composer test:coverage-critical
