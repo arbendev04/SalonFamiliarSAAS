@@ -15,6 +15,7 @@ use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Validator as ValidatorFacade;
 use Inertia\Inertia;
 use Inertia\Response;
+use RuntimeException;
 
 class SocialSecurityAffiliationController extends Controller
 {
@@ -123,6 +124,10 @@ class SocialSecurityAffiliationController extends Controller
         }
 
         $validated = $validator->validate();
+
+        if (! is_string($validated['entity_id'])) {
+            throw new RuntimeException('El identificador de la entidad no es válido.');
+        }
 
         $entity = SocialSecurityEntity::query()
             ->effectiveForCompany(app(CurrentCompany::class)->id())

@@ -9,11 +9,15 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Carbon;
 
 /**
  * A request for leave (vacation, unpaid leave, etc.) by an employee, over a
  * date range, moving through pending/approved/rejected per
  * App\Services\Leave\LeaveRecordService. See .ai/04-DOMAIN-MODEL.md.
+ *
+ * @property Carbon $date_from
+ * @property Carbon $date_to
  */
 class LeaveRecord extends Model
 {

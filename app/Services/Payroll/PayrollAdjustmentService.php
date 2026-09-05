@@ -223,6 +223,9 @@ class PayrollAdjustmentService
      * applied_in_period_id is null here (unlike adjustInNextPeriod()) because
      * the correction lands in the SAME period being corrected in place, not
      * a different target period — there is nothing else to name.
+     *
+     * @param  array<string, mixed>|null  $originalValue
+     * @param  array<string, mixed>  $correctedValue
      */
     public function recordReopenCorrection(
         PayrollEntry $entry,

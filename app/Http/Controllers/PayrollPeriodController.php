@@ -151,7 +151,7 @@ class PayrollPeriodController extends Controller
             ->where('entity_id', $period->id)
             ->where('action', 'payroll_period.calculated')
             ->latest('created_at')
-            ->first()?->new_value ?? [];
+            ->first()->new_value ?? [];
         $okCount = $summary['ok_count'] ?? 0;
         $blockedCount = $summary['blocked_count'] ?? 0;
 

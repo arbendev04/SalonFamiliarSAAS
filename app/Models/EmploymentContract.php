@@ -11,6 +11,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Carbon;
 
 /**
  * The historical employment relationship between an employee and the
@@ -18,6 +19,9 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * closes the current contract (end_date) and opens a new one; a salary
  * raise within the same contract goes through SalaryHistory instead.
  * See .ai/04-DOMAIN-MODEL.md.
+ *
+ * @property Carbon $start_date
+ * @property Carbon|null $end_date
  */
 class EmploymentContract extends Model
 {

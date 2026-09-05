@@ -405,6 +405,6 @@ class TimeCalculationEngine
                 'event_type' => $event['event_type'],
                 'event_datetime' => $event['event_datetime']->toIso8601String(),
             ])->all(),
-        ]));
+        ], JSON_THROW_ON_ERROR));
     }
 }

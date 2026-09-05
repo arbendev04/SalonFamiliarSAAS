@@ -33,7 +33,7 @@ class AttendanceRecordController extends Controller
                 'ordinary_minutes' => $record->ordinary_minutes,
                 'overtime_candidate_minutes' => $record->overtime_candidate_minutes,
                 'missing_minutes' => $record->missing_minutes,
-                'calculated_at' => $record->calculated_at?->toDateTimeString(),
+                'calculated_at' => $record->calculated_at->toDateTimeString(),
             ]),
             'canCalculate' => Gate::allows('time_calculation.calculate'),
         ]);

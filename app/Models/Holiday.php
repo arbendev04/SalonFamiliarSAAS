@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Carbon;
 
 /**
  * A single holiday date available to a company. A null company_id is a
@@ -21,6 +22,8 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  * HasPlatformOrCompanyDefault::effectiveCatalog() — how a company holiday
  * landing on the same date as a platform default should be displayed or
  * merged is left to the holidays CRUD commit, not decided here.
+ *
+ * @property Carbon $date
  */
 class Holiday extends Model
 {

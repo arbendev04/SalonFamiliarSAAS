@@ -10,11 +10,16 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Carbon;
 
 /**
  * A concrete, dated shift instance — generated from a WorkScheduleTemplate
  * or created manually (double shifts, exceptional coverage). See
  * .ai/08-SHIFTS.md.
+ *
+ * @property Carbon $date
+ * @property Carbon $start_datetime
+ * @property Carbon $end_datetime
  */
 class Shift extends Model
 {

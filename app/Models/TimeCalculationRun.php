@@ -6,10 +6,12 @@ use App\Exceptions\TimeCalculationRunImmutableException;
 use App\Models\Builders\TimeCalculationRunImmutableBuilder;
 use App\Models\Concerns\BelongsToCompany;
 use Database\Factories\TimeCalculationRunFactory;
+use Illuminate\Database\Eloquent\Attributes\UseEloquentBuilder;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Carbon;
 
 /**
  * The immutable audit trace of a single time-calculation run. Per
@@ -21,11 +23,18 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * Immutability is enforced in two independent layers, replicating (not
  * reusing) the AttendanceEvent pattern:
  *   1. Model events (booted() below) reject per-instance update()/delete().
- *   2. newEloquentBuilder() swaps in TimeCalculationRunImmutableBuilder,
+ *   2. The #[UseEloquentBuilder] attribute swaps in
+ *      TimeCalculationRunImmutableBuilder (a declarative alternative to
+ *      overriding newEloquentBuilder() that lets Larastan resolve
+ *      X::query() to TimeCalculationRunImmutableBuilder<X> without a
+ *      generic-covariance mismatch — see Model::resolveCustomBuilderClass()),
  *      which rejects mass update()/delete() issued directly through the
  *      query builder — those never fire model events and would otherwise
  *      bypass layer 1.
+ *
+ * @property Carbon $date
  */
+#[UseEloquentBuilder(TimeCalculationRunImmutableBuilder::class)]
 class TimeCalculationRun extends Model
 {
     /** @use HasFactory<TimeCalculationRunFactory> */
@@ -68,14 +77,6 @@ class TimeCalculationRun extends Model
         static::deleting(function () {
             throw new TimeCalculationRunImmutableException;
         });
-    }
-
-    /**
-     * @return TimeCalculationRunImmutableBuilder<$this>
-     */
-    public function newEloquentBuilder($query): TimeCalculationRunImmutableBuilder
-    {
-        return new TimeCalculationRunImmutableBuilder($query);
     }
 
     /**

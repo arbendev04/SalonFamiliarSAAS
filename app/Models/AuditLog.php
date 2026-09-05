@@ -6,6 +6,7 @@ use App\Exceptions\AuditLogImmutableException;
 use App\Models\Builders\AuditLogImmutableBuilder;
 use App\Models\Concerns\BelongsToCompany;
 use Database\Factories\AuditLogFactory;
+use Illuminate\Database\Eloquent\Attributes\UseEloquentBuilder;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -20,10 +21,18 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * reusing) the AttendanceEvent/TimeCalculationRun/PayrollAdjustment/
  * GeneratedDocument pattern:
  *   1. Model events (booted() below) reject per-instance update()/delete().
- *   2. newEloquentBuilder() swaps in AuditLogImmutableBuilder, which rejects
- *      mass update()/delete() issued directly through the query builder —
+ *   2. The #[UseEloquentBuilder] attribute swaps in AuditLogImmutableBuilder
+ *      (a declarative alternative to overriding newEloquentBuilder() that
+ *      lets Larastan resolve X::query() to AuditLogImmutableBuilder<X>
+ *      without a generic-covariance mismatch — see
+ *      Model::resolveCustomBuilderClass()), which rejects mass
+ *      update()/delete() issued directly through the query builder —
  *      those never fire model events and would otherwise bypass layer 1.
+ *
+ * @property array<string, mixed>|null $old_value
+ * @property array<string, mixed>|null $new_value
  */
+#[UseEloquentBuilder(AuditLogImmutableBuilder::class)]
 class AuditLog extends Model
 {
     /** @use HasFactory<AuditLogFactory> */
@@ -66,14 +75,6 @@ class AuditLog extends Model
         static::deleting(function () {
             throw new AuditLogImmutableException;
         });
-    }
-
-    /**
-     * @return AuditLogImmutableBuilder<$this>
-     */
-    public function newEloquentBuilder($query): AuditLogImmutableBuilder
-    {
-        return new AuditLogImmutableBuilder($query);
     }
 
     /**

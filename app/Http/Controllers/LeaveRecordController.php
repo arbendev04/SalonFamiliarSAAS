@@ -91,9 +91,15 @@ class LeaveRecordController extends Controller
         // same way StoreAttendanceAdjustmentRequest's original_event_id is
         // only validated, never loaded — the exists rule already proved the
         // id is a visible platform-default-or-own-company row.
+        $leaveTypeId = $request->validated('leave_type_id');
+
+        if (! is_string($leaveTypeId)) {
+            throw new RuntimeException('El identificador del tipo de licencia no es válido.');
+        }
+
         $leaveType = LeaveType::query()
             ->effectiveForCompany($companyId)
-            ->findOrFail($request->validated('leave_type_id'));
+            ->findOrFail($leaveTypeId);
 
         $record = $service->create(
             employee: $employee,

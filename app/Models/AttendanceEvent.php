@@ -6,10 +6,12 @@ use App\Exceptions\AttendanceEventImmutableException;
 use App\Models\Builders\ImmutableBuilder;
 use App\Models\Concerns\BelongsToCompany;
 use Database\Factories\AttendanceEventFactory;
+use Illuminate\Database\Eloquent\Attributes\UseEloquentBuilder;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Carbon;
 
 /**
  * The immutable record of a single attendance marking. Per
@@ -20,10 +22,18 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  *
  * Immutability is enforced in two independent layers:
  *   1. Model events (booted() below) reject per-instance update()/delete().
- *   2. newEloquentBuilder() swaps in ImmutableBuilder, which rejects mass
- *      update()/delete() issued directly through the query builder — those
- *      never fire model events and would otherwise bypass layer 1.
+ *   2. The #[UseEloquentBuilder] attribute swaps in ImmutableBuilder (a
+ *      declarative alternative to overriding newEloquentBuilder() that lets
+ *      Larastan resolve X::query() to ImmutableBuilder<X> without a
+ *      generic-covariance mismatch — see Model::resolveCustomBuilderClass()),
+ *      which rejects mass update()/delete() issued directly through the
+ *      query builder — those never fire model events and would otherwise
+ *      bypass layer 1.
+ *
+ * @property Carbon $event_datetime
+ * @property array<string, mixed> $metadata
  */
+#[UseEloquentBuilder(ImmutableBuilder::class)]
 class AttendanceEvent extends Model
 {
     /** @use HasFactory<AttendanceEventFactory> */
@@ -68,14 +78,6 @@ class AttendanceEvent extends Model
         static::deleting(function () {
             throw new AttendanceEventImmutableException;
         });
-    }
-
-    /**
-     * @return ImmutableBuilder<$this>
-     */
-    public function newEloquentBuilder($query): ImmutableBuilder
-    {
-        return new ImmutableBuilder($query);
     }
 
     /**

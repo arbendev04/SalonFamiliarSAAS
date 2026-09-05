@@ -25,7 +25,7 @@ class AttendanceAdjustmentController extends Controller
         }
 
         $originalEventId = $request->validated('original_event_id');
-        $originalEvent = $originalEventId
+        $originalEvent = is_string($originalEventId)
             ? AttendanceEvent::query()->find($originalEventId)
             : null;
 

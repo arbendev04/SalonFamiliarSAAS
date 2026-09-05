@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Carbon;
 
 /**
  * A payroll settlement period (e.g. a biweekly cut) for a company. Its
@@ -16,6 +17,10 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * App\Services\Payroll\PayrollPeriodService — once closed it is immutable
  * to the application, except through the explicit reopen path (ADR-026).
  * See .ai/10-PAYROLL.md.
+ *
+ * @property Carbon $start_date
+ * @property Carbon $end_date
+ * @property Carbon|null $closed_at
  */
 class PayrollPeriod extends Model
 {

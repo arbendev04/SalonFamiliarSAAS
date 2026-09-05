@@ -10,12 +10,17 @@ use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Carbon;
 
 /**
  * A versioned, effective-dated set of parameters for a LaborRule. Never
  * edited once a calculation may have used it — a correction is always a
  * new version (HISTORIAL semantics, see .ai/05-DATABASE.md), which is why
  * this model has no soft-delete.
+ *
+ * @property array<string, mixed> $parameters
+ * @property Carbon $effective_from
+ * @property Carbon|null $effective_to
  */
 class LaborRuleVersion extends Model
 {

@@ -3,6 +3,7 @@
 namespace App\Models\Concerns;
 
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Collection;
 
 /**
@@ -35,6 +36,11 @@ trait HasPlatformOrCompanyDefault
     /**
      * All rows visible to the given company: platform defaults
      * (company_id IS NULL) plus that company's own overrides.
+     *
+     * @template TModel of Model
+     *
+     * @param  Builder<TModel>  $query
+     * @return Builder<TModel>
      */
     public function scopeEffectiveForCompany(Builder $query, ?string $companyId): Builder
     {

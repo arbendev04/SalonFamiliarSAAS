@@ -8,12 +8,16 @@ use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Carbon;
 
 /**
  * A planned rest window inside a Shift — distinct from the real
  * BREAK_START/BREAK_END attendance events (.ai/07-ATTENDANCE.md). A split
  * shift is modeled as a single Shift with one of these covering the
  * unworked middle window (.ai/08-SHIFTS.md).
+ *
+ * @property Carbon $planned_start
+ * @property Carbon $planned_end
  */
 class ShiftBreak extends Model
 {

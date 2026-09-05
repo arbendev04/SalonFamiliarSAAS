@@ -28,6 +28,7 @@ use App\Models\SocialSecurityContribution;
 use App\Models\SocialSecurityEntity;
 use App\Services\TimeCalculation\TimeCalculationEngine;
 use Carbon\CarbonInterface;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
@@ -130,7 +131,7 @@ class PayrollCalculationService
      * rather than inventing a second exception type for what is the same
      * class of ambiguity.
      *
-     * @return Collection<int, array{contract: EmploymentContract, from: CarbonInterface, to: CarbonInterface}>
+     * @return Collection<int, array{contract: EmploymentContract, from: Carbon, to: Carbon}>
      *
      * @throws AmbiguousContractException
      */
@@ -172,7 +173,7 @@ class PayrollCalculationService
      * throws AmbiguousContractException; see resolveContractSubRanges()'s
      * docblock for why gap/overlap/absence are never distinguished.
      *
-     * @param  Collection<int, array{contract: EmploymentContract, from: CarbonInterface, to: CarbonInterface}>  $subRanges
+     * @param  Collection<int, array{contract: EmploymentContract, from: Carbon, to: Carbon}>  $subRanges
      *
      * @throws AmbiguousContractException
      */
@@ -225,7 +226,7 @@ class PayrollCalculationService
      * assertAffiliationSubRangesTilePeriodExactly() is called to enforce
      * that, and can throw.
      *
-     * @return Collection<int, array{affiliation: SocialSecurityAffiliation, from: CarbonInterface, to: CarbonInterface}>
+     * @return Collection<int, array{affiliation: SocialSecurityAffiliation, from: Carbon, to: Carbon}>
      *
      * @throws NoActiveSocialSecurityAffiliationException
      */
@@ -294,7 +295,7 @@ class PayrollCalculationService
      * commit's anonymous-subclass test wrapper needs direct access, and a
      * `private` method here would not be reachable from it.
      *
-     * @param  Collection<int, array{affiliation: SocialSecurityAffiliation, from: CarbonInterface, to: CarbonInterface}>  $subRanges
+     * @param  Collection<int, array{affiliation: SocialSecurityAffiliation, from: Carbon, to: Carbon}>  $subRanges
      *
      * @throws NoActiveSocialSecurityAffiliationException
      */
@@ -476,7 +477,7 @@ class PayrollCalculationService
      * file's tests use, since PHP does not allow a subclass to call a
      * parent's private method even via inherited scope.
      *
-     * @return Collection<int, array{concept_code: string, quantity: float, rate: float, amount: float}>
+     * @return Collection<int, array{concept_code: 'OVERTIME', quantity: float|int<0, max>, rate: float, amount: float}>
      *
      * @throws NoActiveLaborRuleVersionException
      * @throws AmbiguousLaborRuleVersionException

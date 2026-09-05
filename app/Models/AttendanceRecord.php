@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Carbon;
 
 /**
  * A recalculable derived cache: the planned-vs-worked outcome for one
@@ -17,6 +18,12 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * never patched incrementally (ADR-014) — so, unlike AttendanceEvent, this
  * table is not immutable and carries no soft-delete: deletion isn't a
  * concept that applies to a value that is always fully recomputed.
+ *
+ * @property Carbon $date
+ * @property array<string, mixed> $planned_json
+ * @property array<string, mixed> $worked_json
+ * @property array<string, mixed> $justification_json
+ * @property Carbon $calculated_at
  */
 class AttendanceRecord extends Model
 {

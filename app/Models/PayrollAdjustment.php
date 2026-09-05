@@ -6,6 +6,7 @@ use App\Exceptions\PayrollAdjustmentImmutableException;
 use App\Models\Builders\PayrollAdjustmentImmutableBuilder;
 use App\Models\Concerns\BelongsToCompany;
 use Database\Factories\PayrollAdjustmentFactory;
+use Illuminate\Database\Eloquent\Attributes\UseEloquentBuilder;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -22,11 +23,19 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * Immutability is enforced in two independent layers, replicating (not
  * reusing) the AttendanceEvent/TimeCalculationRun pattern:
  *   1. Model events (booted() below) reject per-instance update()/delete().
- *   2. newEloquentBuilder() swaps in PayrollAdjustmentImmutableBuilder,
+ *   2. The #[UseEloquentBuilder] attribute swaps in
+ *      PayrollAdjustmentImmutableBuilder (a declarative alternative to
+ *      overriding newEloquentBuilder() that lets Larastan resolve
+ *      X::query() to PayrollAdjustmentImmutableBuilder<X> without a
+ *      generic-covariance mismatch — see Model::resolveCustomBuilderClass()),
  *      which rejects mass update()/delete() issued directly through the
  *      query builder — those never fire model events and would otherwise
  *      bypass layer 1.
+ *
+ * @property array<string, mixed> $original_value
+ * @property array<string, mixed> $corrected_value
  */
+#[UseEloquentBuilder(PayrollAdjustmentImmutableBuilder::class)]
 class PayrollAdjustment extends Model
 {
     /** @use HasFactory<PayrollAdjustmentFactory> */
@@ -72,14 +81,6 @@ class PayrollAdjustment extends Model
         static::deleting(function () {
             throw new PayrollAdjustmentImmutableException;
         });
-    }
-
-    /**
-     * @return PayrollAdjustmentImmutableBuilder<$this>
-     */
-    public function newEloquentBuilder($query): PayrollAdjustmentImmutableBuilder
-    {
-        return new PayrollAdjustmentImmutableBuilder($query);
     }
 
     /**

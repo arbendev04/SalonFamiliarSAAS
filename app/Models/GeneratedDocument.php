@@ -6,6 +6,7 @@ use App\Exceptions\GeneratedDocumentImmutableException;
 use App\Models\Builders\GeneratedDocumentImmutableBuilder;
 use App\Models\Concerns\BelongsToCompany;
 use Database\Factories\GeneratedDocumentFactory;
+use Illuminate\Database\Eloquent\Attributes\UseEloquentBuilder;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -22,11 +23,16 @@ use Illuminate\Database\Eloquent\Relations\MorphTo;
  * Immutability is enforced in two independent layers, replicating (not
  * reusing) the AttendanceEvent/TimeCalculationRun/PayrollAdjustment pattern:
  *   1. Model events (booted() below) reject per-instance update()/delete().
- *   2. newEloquentBuilder() swaps in GeneratedDocumentImmutableBuilder,
+ *   2. The #[UseEloquentBuilder] attribute swaps in
+ *      GeneratedDocumentImmutableBuilder (a declarative alternative to
+ *      overriding newEloquentBuilder() that lets Larastan resolve
+ *      X::query() to GeneratedDocumentImmutableBuilder<X> without a
+ *      generic-covariance mismatch — see Model::resolveCustomBuilderClass()),
  *      which rejects mass update()/delete() issued directly through the
  *      query builder — those never fire model events and would otherwise
  *      bypass layer 1.
  */
+#[UseEloquentBuilder(GeneratedDocumentImmutableBuilder::class)]
 class GeneratedDocument extends Model
 {
     /** @use HasFactory<GeneratedDocumentFactory> */
@@ -67,14 +73,6 @@ class GeneratedDocument extends Model
         static::deleting(function () {
             throw new GeneratedDocumentImmutableException;
         });
-    }
-
-    /**
-     * @return GeneratedDocumentImmutableBuilder<$this>
-     */
-    public function newEloquentBuilder($query): GeneratedDocumentImmutableBuilder
-    {
-        return new GeneratedDocumentImmutableBuilder($query);
     }
 
     /**

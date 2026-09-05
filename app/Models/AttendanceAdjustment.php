@@ -16,6 +16,9 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * service layer (App\Services\Attendance\AttendanceAdjustmentService) — a
  * later correction always inserts a new row, it never edits an
  * already-approved/rejected one.
+ *
+ * @property array<string, mixed>|null $original_value
+ * @property array<string, mixed> $corrected_value
  */
 class AttendanceAdjustment extends Model
 {

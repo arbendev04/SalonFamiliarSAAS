@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Carbon;
 
 /**
  * The historical record of an employee's affiliation to a
@@ -17,6 +18,9 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * Never overwritten once created — closing an affiliation means setting
  * end_date, never deleting the row (HISTORIAL semantics, same as
  * EmploymentContract), which is why this model has no soft-delete.
+ *
+ * @property Carbon $start_date
+ * @property Carbon|null $end_date
  */
 class SocialSecurityAffiliation extends Model
 {
