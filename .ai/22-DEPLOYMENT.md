@@ -46,7 +46,7 @@ Este archivo no define entidades de dominio ni tablas nuevas (ver [04-DOMAIN-MOD
 
 ### Deploy con el menor downtime posible
 
-- El deploy debe buscar minimizar el tiempo de indisponibilidad del sistema para los usuarios finales. Laravel Cloud publica que el deploy de un release es cuestión de segundos y que el compute despierta en menos de 500ms tras estar en scale-to-zero, pero el mecanismo exacto de corte de tráfico entre la versión vieja y la nueva (si es atómico, gradual, o requiere configuración explícita) no está confirmado en detalle — **PENDING DECISION** menor a verificar contra la documentación operativa de Laravel Cloud al llegar a la Fase 15.
+- El deploy debe buscar minimizar el tiempo de indisponibilidad del sistema para los usuarios finales. **RESUELTO** (verificado contra la documentación oficial de Laravel Cloud en la Fase 15): el mecanismo de corte de tráfico no es atómico ni gradual en el sentido de un canary rollout — es una terminación ordenada. Una vez que el build y los deploy commands (ej. `php artisan migrate --force`) terminan exitosamente, la versión anterior se termina de forma gradual (dejando completar las requests en curso) mientras la nueva versión entra en línea, sin downtime. Si el build o los deploy commands fallan, la versión anterior **nunca se reemplaza** — un deploy roto simplemente no sale al aire. Esta es la protección de disponibilidad real que ofrece el plan Starter (ver ADR-040 corregido en [23-DECISIONS.md](./23-DECISIONS.md)).
 
 ## Flujos
 
@@ -58,8 +58,8 @@ Este archivo no define entidades de dominio ni tablas nuevas (ver [04-DOMAIN-MOD
 
 ### Procedimiento de rollback ante un deploy fallido
 
-1. Se detecta que el deploy recién realizado presenta un fallo (error en smoke test post-deploy, error crítico reportado).
-2. El rollback se dispara **automáticamente** (ADR-040): se revierte el código a la versión (release) previa conocida como estable, sin esperar confirmación manual de un operador.
+1. Se detecta que el deploy recién realizado presenta un fallo — ya sea porque el build/deploy commands fallan (en cuyo caso Laravel Cloud nunca reemplaza la versión anterior, no se requiere ninguna acción) o porque el smoke test post-deploy falla tras un cutover ya exitoso (caso genuino de rollback, ver ADR-040 corregido en [23-DECISIONS.md](./23-DECISIONS.md)).
+2. El rollback en este segundo caso es **manual** en el plan Starter (el rollback automático post-cutover es una función exclusiva de Enterprise): se vuelve a desplegar el `commit_hash` de la última versión conocida como estable, vía el deploy hook (`?commit_hash=...`) o el botón "Redeploy" del dashboard.
 3. Si el deploy fallido incluyó una migración de base de datos, la reversión del esquema se resuelve contra el backup tomado antes de esa migración (ver regla de backup obligatorio); revertir código sin revertir un esquema incompatible puede dejar el sistema en un estado inconsistente, por lo que ambos pasos deben coordinarse.
 4. Se registra el incidente (ver plan de respuesta a incidentes en [20-SECURITY.md](./20-SECURITY.md)).
 
@@ -73,7 +73,7 @@ Este archivo no define entidades de dominio ni tablas nuevas (ver [04-DOMAIN-MOD
 
 ## Errores
 
-- **Fallo de deploy**: **RESUELTO** (ADR-040 en [23-DECISIONS.md](./23-DECISIONS.md)) — el rollback se dispara **automáticamente** al detectar el fallo (smoke test post-deploy fallido o error crítico reportado), sin esperar confirmación manual de un operador, minimizando el tiempo de indisponibilidad.
+- **Fallo de deploy**: **RESUELTO** (ADR-040 corregido en [23-DECISIONS.md](./23-DECISIONS.md), Fase 15) — un build/deploy commands fallido nunca reemplaza la versión en producción (protección automática de la plataforma). Un smoke test fallido tras un cutover ya exitoso requiere rollback **manual** (redeploy del commit anterior) en el plan Starter; el rollback automático post-cutover es una función Enterprise que este proyecto no contrata.
 
 ## Seguridad
 
@@ -99,4 +99,4 @@ Este archivo no define entidades de dominio ni tablas nuevas (ver [04-DOMAIN-MOD
 
 **PENDING DECISION**: Estrategia concreta de backups y recuperación ante desastres (RPO/RTO exactos) — Laravel Cloud gestiona backups de su Postgres administrado, pero los valores concretos de RPO/RTO de su SLA no se han confirmado todavía contra la documentación oficial del proveedor.
 
-**RESUELTO**: El rollback ante un deploy fallido es **automático** (ver ADR-040 en [23-DECISIONS.md](./23-DECISIONS.md)).
+**RESUELTO** (corregido en Fase 15): el rollback ante un smoke test fallido post-cutover es **manual** en el plan Starter (redeploy del commit anterior conocido-bueno); un build/deploy commands fallido nunca sale al aire, sin necesidad de rollback. Ver ADR-040 corregido en [23-DECISIONS.md](./23-DECISIONS.md).
