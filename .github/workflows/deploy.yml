@@ -1,0 +1,44 @@
+name: deploy
+
+on:
+  workflow_run:
+    workflows: ["tests"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-staging:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger staging deploy
+        run: |
+          curl -fsS -X POST "${{ secrets.LARAVEL_CLOUD_STAGING_DEPLOY_HOOK }}?commit_hash=${{ github.event.workflow_run.head_sha }}"
+
+      - name: Wait for deploy to settle
+        run: sleep 30
+
+      - name: Smoke test staging
+        run: |
+          curl -fsS --retry 5 --retry-delay 10 --retry-connrefused \
+            https://salonfamiliarsaas-staging-huc4xd.laravel.cloud/up
+
+  deploy-production:
+    needs: deploy-staging
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Trigger production deploy
+        run: |
+          curl -fsS -X POST "${{ secrets.LARAVEL_CLOUD_PRODUCTION_DEPLOY_HOOK }}?commit_hash=${{ github.event.workflow_run.head_sha }}"
+
+      - name: Wait for deploy to settle
+        run: sleep 30
+
+      - name: Smoke test production
+        run: |
+          curl -fsS --retry 5 --retry-delay 10 --retry-connrefused \
+            https://salonfamiliarsaas-production-hmzgg9.laravel.cloud/up
