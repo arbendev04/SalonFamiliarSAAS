@@ -79,6 +79,12 @@
             "@types:check",
             "@php artisan test"
         ],
+        "test:coverage": [
+            "@php artisan test --coverage --min=80"
+        ],
+        "test:coverage-critical": [
+            "vendor/bin/pest -c phpunit.coverage-critical.xml --coverage --min=90"
+        ],
         "post-autoload-dump": [
             "Illuminate\\Foundation\\ComposerScripts::postAutoloadDump",
             "@php artisan package:discover --ansi"
