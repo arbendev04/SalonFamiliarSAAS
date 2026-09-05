@@ -287,10 +287,10 @@ class TimeCalculationEngine
         $plannedGrossMinutes = $shift->start_datetime->diffInMinutes($shift->end_datetime);
 
         $plannedBreakMinutes = $shift->breaks->sum(
-            fn (ShiftBreak $break): int => $break->planned_start->diffInMinutes($break->planned_end)
+            fn (ShiftBreak $break): int => (int) round($break->planned_start->diffInMinutes($break->planned_end))
         );
 
-        return $plannedGrossMinutes - $plannedBreakMinutes;
+        return (int) round($plannedGrossMinutes - $plannedBreakMinutes);
     }
 
     /**
@@ -331,7 +331,7 @@ class TimeCalculationEngine
             }
         }
 
-        return $grossWorkedMinutes - $pairedBreakMinutes;
+        return (int) round($grossWorkedMinutes - $pairedBreakMinutes);
     }
 
     /**
