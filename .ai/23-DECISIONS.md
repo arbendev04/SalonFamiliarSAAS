@@ -574,15 +574,21 @@ Cada ADR sigue este formato exacto:
 
 ---
 
-### ADR-040: Rollback automático ante un deploy fallido
+### ADR-040: Rollback ante un deploy fallido (corregido en Fase 15 contra la realidad del plan Starter)
 
 **Contexto**: [22-DEPLOYMENT.md](./22-DEPLOYMENT.md) dejaba pendiente si el rollback ante un deploy fallido debía dispararse automáticamente o requerir confirmación manual de un operador.
 
-**Decisión**: el rollback es **automático** — al detectar el fallo (smoke test post-deploy fallido o error crítico reportado), el sistema revierte a la versión estable anterior sin esperar confirmación humana.
+**Decisión original (Fase 0)**: el rollback sería **automático** — al detectar el fallo, el sistema revertiría a la versión estable anterior sin esperar confirmación humana. Esta decisión asumía una capacidad de la plataforma de hosting que nunca se verificó contra documentación real, ya que el proveedor (Laravel Cloud) todavía no se había elegido en ese momento.
 
-**Motivo**: decisión del propietario del producto; minimiza el tiempo de indisponibilidad para los usuarios finales, que es más importante que dar a un operador la chance de intervenir antes de revertir — sobre todo porque revertir a la versión anterior conocida como estable es, por definición, una operación segura.
+**Corrección (Fase 15)**: al llegar el momento de implementar el pipeline de despliegue, se verificó en vivo la documentación oficial de Laravel Cloud y se encontró que el rollback automático post-cutover ("instant rollbacks") es una función exclusiva del plan **Enterprise** — no está disponible en el plan **Starter** que este proyecto contrata (ADR-021). La decisión original no era ejecutable con la infraestructura real elegida.
 
-**Alternativas consideradas**: rollback manual con confirmación de un operador (descartada: deja el sistema roto más tiempo mientras alguien se entera y reacciona, sin un beneficio de control proporcional dado que la reversión es a un estado ya validado).
+**Decisión corregida**: el mecanismo real de protección en el plan Starter es de dos partes:
+1. **Automático, sin acción del operador**: si el build o los deploy commands fallan (incluida una migración que revienta), Laravel Cloud **nunca reemplaza** la versión que ya está sirviendo tráfico — el deploy roto simplemente no sale al aire. Esto cubre la mayoría de los fallos de deploy sin necesitar rollback en absoluto.
+2. **Manual, si el fallo aparece después del cutover**: si el smoke test post-deploy falla porque el deploy ya salió al aire y falla en runtime (un caso que el build no pudo detectar de antemano), el rollback es un redeploy manual del `commit_hash` de la última versión conocida como estable, vía el deploy hook o el botón "Redeploy" del dashboard. El pipeline de CI/CD (ver `deploy.yml`) corre un smoke test automático contra `/up` tras cada deploy de staging que **alerta** ante un fallo, pero no revierte solo.
+
+**Motivo de la corrección**: confirmado con el propietario del producto — pagar el salto a Enterprise (precio a consultar con el proveedor, sensiblemente mayor a los $5/mes de Starter) solo para tener rollback instantáneo no se justifica en esta etapa del producto; el smoke test que alerta da suficiente visibilidad para que un rollback manual, aunque no instantáneo, siga siendo rápido.
+
+**Alternativas consideradas**: (a) upgradear a un plan superior de Laravel Cloud para tener rollback automático real — descartada por costo desproporcionado a esta etapa; (b) construir rollback automático "casero" vía GitHub Actions (un workflow que detecta el smoke test fallido y dispara solo un redeploy del commit anterior) — descartada por el usuario en favor de la opción más simple (alertar, no revertir solo), dejando la puerta abierta a construirlo más adelante si la operación real lo justifica.
 
 **Consecuencias**: [22-DEPLOYMENT.md](./22-DEPLOYMENT.md) documenta el procedimiento de rollback como automático; el incidente igual se registra (ver plan de respuesta a incidentes en [20-SECURITY.md](./20-SECURITY.md)) para que el equipo se entere y corrija la causa del fallo, aunque el sistema ya haya vuelto a un estado funcional.
 
