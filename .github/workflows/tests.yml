@@ -73,3 +73,79 @@ jobs:
 
       - name: Coverage gate — critical modules 90%
         run: composer test:coverage-critical
+
+  # Separate from `ci` on purpose: Dusk needs a real running HTTP server, a
+  # file-backed SQLite database (the browser drives separate real requests
+  # against a separately-running server process — `:memory:` doesn't persist
+  # across processes), SESSION_DRIVER=file (not `array`, which only survives
+  # a single request and would break loginAs()'s session cookie surviving
+  # between page visits), and a real Chrome + ChromeDriver pair. None of that
+  # mixes cleanly with the `ci` job's Postgres/sqlite-in-memory setup above.
+  dusk:
+    runs-on: ubuntu-latest
+
+    env:
+      APP_URL: http://127.0.0.1:8000
+      DB_CONNECTION: sqlite
+      DB_DATABASE: database/testing_dusk.sqlite
+      SESSION_DRIVER: file
+      CACHE_STORE: file
+      QUEUE_CONNECTION: sync
+      MAIL_MAILER: array
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
+        with:
+          php-version: '8.4'
+          extensions: pdo_sqlite, sqlite3
+          tools: composer:v2
+          coverage: none
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+
+      - name: Create Dusk SQLite database
+        run: |
+          mkdir -p database
+          touch database/testing_dusk.sqlite
+
+      # Installs Composer + npm deps, generates the app key, migrates the
+      # file-backed sqlite DB from above (DB_* is set at job level, so this
+      # runs against it instead of whatever .env.example ships), and builds
+      # the frontend assets Dusk's browser will actually load.
+      - name: Setup Application
+        run: composer setup
+
+      - name: Install ChromeDriver
+        run: php artisan dusk:chrome-driver --detect
+
+      - name: Start ChromeDriver
+        run: ./vendor/laravel/dusk/bin/chromedriver-linux --port=9515 &
+
+      - name: Start Laravel server
+        run: php artisan serve --no-reload &
+
+      - name: Run Dusk tests
+        run: php artisan dusk
+
+      - name: Upload screenshots
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dusk-screenshots
+          path: tests/Browser/screenshots
+
+      - name: Upload console logs
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dusk-console
+          path: tests/Browser/console

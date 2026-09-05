@@ -31,6 +31,16 @@ An HTTP test shows that the endpoint performs authorization. It cannot identify 
 - Write one HTTP test for one refused role, which shows that the endpoint calls the authorization.
 - Use the helper of the project that asserts the ability and the arguments of the gate, if such a helper exists.
 
+## Browser Tests
+
+Write a browser test only for JavaScript behavior that an HTTP test cannot reach, such as modal interaction, drag-and-drop, live search, or client-side validation. Browser tests are slower than HTTP tests and can fail for reasons unrelated to the code under test.
+
+- Assert the state that the user can see, and assert the state in the database that the interaction saves.
+- Wait until the test reaches the required state. Do not wait for a fixed number of seconds, which can fail on a slower machine.
+- Put each browser test in `tests/Browser`, which is the suite that Dusk runs.
+- Run the browser tests with `php artisan dusk`. The run needs a ChromeDriver, and `php artisan dusk:install` downloads it.
+- Fetch `https://laravel.com/framework/docs/dusk` for the selectors, the interactions, and the assertions of Dusk.
+
 ## Testing Validation
 
 - Write one test for each validation rule when each failure represents a separate contract.
