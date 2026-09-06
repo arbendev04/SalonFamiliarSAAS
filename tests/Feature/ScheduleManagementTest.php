@@ -207,6 +207,26 @@ class ScheduleManagementTest extends TestCase
         ])->assertSessionHasErrors('template_id');
     }
 
+    public function test_a_second_schedule_cannot_start_on_or_before_an_already_assigned_schedules_start_date()
+    {
+        $firstTemplate = WorkScheduleTemplate::factory()->create(['company_id' => $this->company->id]);
+        $secondTemplate = WorkScheduleTemplate::factory()->create(['company_id' => $this->company->id]);
+
+        $this->actingAs($this->owner)->post(route('employees.schedule.store', $this->employee), [
+            'template_id' => $firstTemplate->id,
+            'effective_from' => '2026-01-01',
+        ])->assertRedirect();
+
+        $response = $this->actingAs($this->owner)->post(route('employees.schedule.store', $this->employee), [
+            'template_id' => $secondTemplate->id,
+            'effective_from' => '2026-01-01',
+        ]);
+
+        $response->assertSessionHasErrors('effective_from');
+
+        $this->assertSame(1, EmployeeSchedule::query()->where('employee_id', $this->employee->id)->count());
+    }
+
     public function test_a_user_without_the_schedules_write_permission_is_denied()
     {
         $employeeRole = Role::query()->whereNull('company_id')->where('name', 'EMPLOYEE')->firstOrFail();
