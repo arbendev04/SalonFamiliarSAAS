@@ -176,7 +176,7 @@ class PayrollPeriodControllerTest extends TestCase
             'amount' => 1000,
         ]);
 
-        // COMPANY_OWNER lacks payroll.calculate but has approve/close/reopen/adjust.
+        // COMPANY_OWNER has calculate/approve/close/reopen/adjust (ADR-044).
         $this->actingAs($owner)
             ->get(route('payroll.periods.show', $period))
             ->assertOk()
@@ -186,7 +186,7 @@ class PayrollPeriodControllerTest extends TestCase
                 ->has('entries', 1)
                 ->where('entries.0.id', $entry->id)
                 ->has('entries.0.lines', 1)
-                ->where('canCalculate', false)
+                ->where('canCalculate', true)
                 ->where('canApprove', true)
                 ->where('canClose', true)
                 ->where('canReopen', true)
@@ -227,6 +227,27 @@ class PayrollPeriodControllerTest extends TestCase
             ->assertForbidden();
 
         $this->assertSame('open', $period->fresh()->status);
+    }
+
+    /**
+     * ADR-044: a self-registered COMPANY_OWNER (and ADMIN, its near-owner
+     * counterpart) must be able to calculate their own company's payroll
+     * without depending on a dedicated PAYROLL_MANAGER user, since the MVP
+     * has no user/role management UI to create one.
+     */
+    public function test_calculate_succeeds_for_company_owner_and_admin_per_adr_044()
+    {
+        foreach (['COMPANY_OWNER', 'ADMIN'] as $roleName) {
+            $user = $this->userWithRole($roleName, $this->company);
+            $period = PayrollPeriod::factory()->create(['company_id' => $this->company->id, 'status' => 'open']);
+
+            $this->actingAs($user)
+                ->post(route('payroll.periods.calculate', $period))
+                ->assertRedirect()
+                ->assertSessionHasNoErrors();
+
+            $this->assertSame('calculated', $period->fresh()->status);
+        }
     }
 
     /**

@@ -61,7 +61,7 @@ Y = permitido, N = no permitido. Ver también la sección 6 del blueprint aproba
 | overtime.authorize | Y | Y | Y | Y | N | Y (limitado) | N | N |
 | leave.approve | Y | Y | Y | Y | N | Y (equipo) | N | N |
 | payroll.read | Y | Y | Y | N | Y | N | Y | Solo propio comprobante |
-| payroll.calculate | Y | N | N | N | Y | N | N | N |
+| payroll.calculate | Y | Y | Y | N | Y | N | N | N |
 | payroll.approve | Y | Y | Y | N | Y | N | N | N |
 | payroll.close | Y | Y | Y | N | Y | N | N | N |
 | payroll.reopen/adjust | Y | Y | Y | N | N | N | N | N |
