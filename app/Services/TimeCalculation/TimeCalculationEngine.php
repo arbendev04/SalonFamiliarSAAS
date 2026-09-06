@@ -11,6 +11,7 @@ use App\Models\Employee;
 use App\Models\LaborRule;
 use App\Models\LaborRuleVersion;
 use App\Models\NoveltyRecord;
+use App\Models\NoveltyType;
 use App\Models\OvertimeRecord;
 use App\Models\Shift;
 use App\Models\ShiftBreak;
@@ -94,6 +95,22 @@ class TimeCalculationEngine
         // acted upon this phase — see its docblock for the exact scoping.
         $coveringNovelty = $this->noveltyLookup->resolve($employee, $date);
 
+        // Resolved via NoveltyType's own effectiveForCompany() scope, never
+        // via the noveltyType() relation's default query — same precedent
+        // as LeaveRecordService::generateNoveltyAndAbsence(). BelongsToCompany's
+        // global scope excludes company_id IS NULL rows whenever a company
+        // is active (SQL's `column = value` never matches NULL), which would
+        // silently turn every platform-default novelty type — the only kind
+        // seeded out of the box by EssentialNoveltyCatalogSeeder — into a
+        // null relation the instant this runs inside a real, company-scoped
+        // request, crashing on `->code` below.
+        $coveringNoveltyTypeCode = $coveringNovelty !== null
+            ? NoveltyType::query()
+                ->effectiveForCompany($employee->company_id)
+                ->whereKey($coveringNovelty->novelty_type_id)
+                ->value('code')
+            : null;
+
         [$ordinaryMinutes, $overtimeCandidateMinutes, $missingMinutes, $justifiedMinutes] = $this->classify(
             $workedMinutes,
             $plannedMinutes,
@@ -119,6 +136,7 @@ class TimeCalculationEngine
             $justifiedMinutes,
             $isFullAbsence,
             $coveringNovelty,
+            $coveringNoveltyTypeCode,
         ) {
             // justification_json only documents a novelty that actually
             // justified the day (the same $isFullAbsence && $coveringNovelty
@@ -129,7 +147,7 @@ class TimeCalculationEngine
             $justificationJson = ($isFullAbsence && $coveringNovelty !== null)
                 ? [
                     'novelty_record_id' => $coveringNovelty->id,
-                    'novelty_type_code' => $coveringNovelty->noveltyType->code,
+                    'novelty_type_code' => $coveringNoveltyTypeCode,
                 ]
                 : null;
 

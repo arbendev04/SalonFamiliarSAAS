@@ -2,13 +2,18 @@
 
 namespace Tests\Feature;
 
+use App\Models\AttendanceRecord;
 use App\Models\Company;
 use App\Models\Employee;
+use App\Models\LaborRule;
+use App\Models\LaborRuleVersion;
 use App\Models\LeaveRecord;
 use App\Models\LeaveType;
 use App\Models\NoveltyType;
 use App\Models\Permission;
 use App\Models\Role;
+use App\Models\Shift;
+use App\Models\ShiftAssignment;
 use App\Models\User;
 use App\Models\UserCompanyMembership;
 use Database\Seeders\PermissionSeeder;
@@ -150,6 +155,80 @@ class LeaveRecordTest extends TestCase
         $record = LeaveRecord::query()->where('employee_id', $this->employee->id)->firstOrFail();
         $this->assertSame('approved', $record->status);
         $this->assertSame($this->owner->id, $record->approved_by);
+    }
+
+    /**
+     * Regression test for the bug reproduced live on staging: an approved
+     * leave request for an employee who already has a Shift/ShiftAssignment
+     * covering the leave date, with zero attendance events on that date (a
+     * genuine full-day absence), used to 500 during the post-approval
+     * recalculation. TimeCalculationEngine::calculateForDate() lazily loads
+     * NoveltyRecord::noveltyType() when building justification_json for a
+     * justified full absence — a plain belongsTo() with no
+     * withoutGlobalScope('company') — which BelongsToCompany's global scope
+     * silently excludes for a platform-default NoveltyType (company_id
+     * null, the only kind that exists out of the box), turning the relation
+     * into null and crashing on `->code`.
+     *
+     * The two catalog rows below must be created BEFORE the HTTP request
+     * (no SetCurrentCompany-resolved active company yet), or
+     * BelongsToCompany's creating() hook overwrites their intended-null
+     * company_id with whatever company happens to be active — see
+     * correlatedCatalogPair() and this file's other tests, which already
+     * rely on that ordering.
+     */
+    public function test_store_for_an_employee_with_an_assigned_shift_and_no_attendance_recalculates_without_a_server_error()
+    {
+        $laborRule = LaborRule::factory()->create([
+            'company_id' => $this->company->id,
+            'rule_type' => 'STANDARD_WORKWEEK',
+        ]);
+        LaborRuleVersion::factory()->create([
+            'company_id' => $this->company->id,
+            'labor_rule_id' => $laborRule->id,
+            'effective_from' => '2026-01-01',
+            'effective_to' => null,
+            'parameters' => ['tolerance_minutes' => 15, 'rounding_minutes' => 5],
+        ]);
+
+        $shift = Shift::factory()->create([
+            'company_id' => $this->company->id,
+            'date' => '2026-03-02',
+            'start_datetime' => '2026-03-02 06:00:00',
+            'end_datetime' => '2026-03-02 14:00:00',
+            'crosses_midnight' => false,
+        ]);
+        ShiftAssignment::factory()->create([
+            'company_id' => $this->company->id,
+            'shift_id' => $shift->id,
+            'employee_id' => $this->employee->id,
+            'status' => 'assigned',
+        ]);
+
+        $leaveType = $this->correlatedCatalogPair('VACACIONES');
+
+        // No attendance events recorded for the shift's date: a genuine
+        // full-day absence, which is the path that reaches the buggy
+        // lazy-loaded noveltyType() access.
+        $this->actingAs($this->owner)->post(route('employees.leave-records.store', $this->employee), [
+            'leave_type_id' => $leaveType->id,
+            'date_from' => '2026-03-02',
+            'date_to' => '2026-03-02',
+            'reason' => 'Vacaciones con turno planificado.',
+        ])->assertRedirect()->assertSessionHasNoErrors();
+
+        $record = LeaveRecord::query()->where('employee_id', $this->employee->id)->firstOrFail();
+        $this->assertSame('approved', $record->status);
+
+        $attendanceRecord = AttendanceRecord::query()
+            ->where('employee_id', $this->employee->id)
+            ->where('date', '2026-03-02')
+            ->first();
+
+        $this->assertNotNull($attendanceRecord);
+        // Shift is 06:00-14:00 with no breaks: 480 planned minutes, fully
+        // justified since the whole day is covered by the approved leave.
+        $this->assertSame(480, $attendanceRecord->justified_minutes);
     }
 
     public function test_store_by_a_user_with_only_leave_create_permission_stays_pending()
